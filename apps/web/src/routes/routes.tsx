@@ -21,6 +21,14 @@ const pageRoutes: AppRoute[] = [
         path: RoutePath.CHAT,
         Component: ChatWorkspace,
       },
+      {
+        path: `${RoutePath.CHAT}/new-session`,
+        Component: NewSessionPage,
+      },
+      {
+        path: `${RoutePath.CHAT}/:sessionId`,
+        Component: ChatWorkspace,
+      },
     ],
   },
 ];

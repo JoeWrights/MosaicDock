@@ -252,7 +252,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
 
           <button
             type="button"
-            className="-mb-6 flex w-full items-center gap-3 rounded-2xl bg-gray-100 p-2 pb-8 text-left transition-colors hover:bg-gray-100"
+            className="-mb-6 flex w-full items-center gap-3 rounded-2xl bg-gray-100 p-2 pb-8 text-left transition-colors hover:bg-gray-100 dark:bg-[#232428] dark:hover:bg-[#232428]"
           >
             <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded bg-linear-to-br from-cyan-100 to-pink-100 text-xl">
               👩🏻‍💻
@@ -267,7 +267,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
           </button>
 
           <div
-            className="relative rounded-[22px] bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.08)] ring-1 ring-gray-200/80 transition-shadow duration-200 focus-within:shadow-[0_2px_22px_rgba(0,0,0,0.11)]"
+            className="relative rounded-[22px] bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.08)] ring-1 ring-gray-200/80 transition-shadow duration-200 focus-within:shadow-[0_2px_22px_rgba(0,0,0,0.11)] dark:bg-[#232428] dark:ring-[#2e3035] dark:shadow-none dark:focus-within:shadow-none"
             data-testid="new-session-input-card"
           >
             <Textarea
@@ -292,7 +292,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
                     {getThinkingEffortLabel(thinkingEffort)}
                   </button>
                   {thinkingPanelOpen ? (
-                    <div className="absolute bottom-9 left-0 z-20 w-[180px] rounded-lg bg-white p-4 shadow-[0_12px_32px_rgba(0,0,0,0.15),0_4px_8px_rgba(0,0,0,0.1)] ring-1 ring-gray-200">
+                    <div className="absolute bottom-9 left-0 z-20 w-[180px] rounded-lg bg-white p-4 shadow-[0_12px_32px_rgba(0,0,0,0.15),0_4px_8px_rgba(0,0,0,0.1)] ring-1 ring-gray-200 dark:bg-[#232428] dark:ring-[#2e3035]">
                       <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
                         <Lightbulb className="h-4 w-4 text-slate-500" aria-hidden="true" />
                         思考强度
@@ -341,7 +341,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
                   <span className="truncate">{selectedModelName}</span>
                 </button>
                 {modelPanelOpen ? (
-                  <div className="absolute bottom-11 right-0 z-20 w-80 rounded-lg bg-white p-4 shadow-[0_12px_32px_rgba(0,0,0,0.15),0_4px_8px_rgba(0,0,0,0.1)] ring-1 ring-gray-200">
+                  <div className="absolute bottom-11 right-0 z-20 w-80 rounded-lg bg-white p-4 shadow-[0_12px_32px_rgba(0,0,0,0.15),0_4px_8px_rgba(0,0,0,0.1)] ring-1 ring-gray-200 dark:bg-[#232428] dark:ring-[#2e3035]">
                     <label className="relative block">
                       <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                       <input

@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
-import { Send } from "lucide-react";
+import { useEffect, useState } from "react";
+import { PanelLeft, Send } from "lucide-react";
+import { useParams } from "react-router-dom";
 import { mosaicApi, type ApiClient, type ChatStreamService } from "@mosaic-dock/api-client";
-import type { Message, PaginatedResponse, Session, SessionListResponse } from "@mosaic-dock/shared";
+import type { Message, PaginatedResponse, Session } from "@mosaic-dock/shared";
 import { Button } from "../../components/ui/button";
 import { EmptyState } from "../../components/ui/empty-state";
 import { Spinner } from "../../components/ui/spinner";
 import { Textarea } from "../../components/ui/textarea";
+import { useWorkspaceSidebar } from "../../layouts/WorkspaceLayout";
 import { cn } from "../../lib/utils";
 
 export interface ChatWorkspaceApi {
   client: Pick<
     ApiClient,
-    "fetchSessions" | "fetchSessionMessages" | "createMessage"
+    "fetchSession" | "fetchSessionMessages" | "createMessage"
   >;
   chatStream: Pick<ChatStreamService, "chat" | "cancelResponse">;
 }
@@ -21,47 +23,48 @@ interface ChatWorkspaceProps {
 }
 
 export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const { sessionId } = useParams();
+  const { sidebarOpen, toggleSidebar } = useWorkspaceSidebar();
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
-  const [loadingSessions, setLoadingSessions] = useState(true);
+  const [loadingSession, setLoadingSession] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const activeSession = useMemo(
-    () => sessions.find((session) => session.id === activeSessionId) ?? null,
-    [activeSessionId, sessions],
-  );
+  const activeSessionId = sessionId && sessionId !== "new-session" ? sessionId : null;
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadSessions() {
-      setLoadingSessions(true);
+    async function loadSession() {
+      if (!activeSessionId) {
+        setActiveSession(null);
+        setLoadingSession(false);
+        return;
+      }
+
+      setLoadingSession(true);
       try {
-        const response: SessionListResponse = await api.client.fetchSessions({
-          limit: 50,
-        });
+        const response = await api.client.fetchSession(activeSessionId);
         if (cancelled) return;
 
-        setSessions(response.items);
-        setActiveSessionId((current) => current ?? response.items[0]?.id ?? null);
+        setActiveSession(response);
       } catch (error) {
         setError(getErrorMessage(error, "会话加载失败"));
       } finally {
         if (!cancelled) {
-          setLoadingSessions(false);
+          setLoadingSession(false);
         }
       }
     }
 
-    void loadSessions();
+    void loadSession();
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [activeSessionId, api]);
 
   useEffect(() => {
     if (!activeSessionId) {
@@ -128,40 +131,22 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   }
 
   return (
-    <div className="grid h-[calc(100vh-4rem)] grid-cols-1 bg-background md:grid-cols-[280px_minmax(0,1fr)]">
-      <aside className="min-h-0 border-r bg-card p-5">
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-muted-foreground">会话</h2>
-        {loadingSessions ? (
-          <Spinner />
-        ) : (
-          <div className="space-y-2">
-            {sessions.length === 0 ? (
-              <EmptyState description="暂无会话" />
-            ) : (
-              sessions.map((session) => (
-                <button
-                  key={session.id}
-                  type="button"
-                  className={cn(
-                    "w-full rounded-xl px-3 py-3 text-left text-sm transition-colors hover:bg-accent",
-                    session.id === activeSessionId && "bg-primary/10 font-semibold text-primary",
-                  )}
-                  onClick={() => setActiveSessionId(session.id)}
-                >
-                  {session.title || "未命名会话"}
-                </button>
-              ))
-            )}
-          </div>
-        )}
-      </aside>
-      <section className="flex min-w-0 flex-col">
-        <header className="flex items-center justify-between border-b bg-card px-6 py-5">
-          <div>
-            <h2 className="text-xl font-semibold">{activeSession?.title ?? "聊天工作台"}</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              第一阶段连接现有 guada 后端，保持 /api/v1 协议。
-            </p>
+    <div className="flex h-screen min-w-0 flex-col bg-background dark:bg-[#1e1f23]">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex h-14 items-center justify-between border-b bg-background px-4 dark:border-[#2e3035] dark:bg-[#1e1f23]">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              aria-label={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
+              title={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
+              className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30] dark:hover:text-[#e8e9ed]"
+              onClick={toggleSidebar}
+            >
+              <PanelLeft className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <h2 className="truncate text-sm font-semibold">
+              {loadingSession ? "加载中..." : activeSession?.title ?? "聊天工作台"}
+            </h2>
           </div>
         </header>
 
@@ -171,7 +156,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
           </div>
         ) : null}
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-6">
+        <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-auto px-6 py-8">
           {loadingMessages ? (
             <Spinner />
           ) : messages.length === 0 ? (
@@ -181,13 +166,13 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
               <article
                 key={item.id}
                 className={cn(
-                  "flex max-w-3xl gap-3",
+                  "mx-auto flex w-full max-w-[760px] gap-3",
                   item.role === "user" && "ml-auto flex-row-reverse",
                 )}
               >
                 <div
                   className={cn(
-                    "grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-950 text-xs font-medium text-white",
+                    "grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-950 text-xs font-medium text-white",
                     item.role === "user" && "bg-primary",
                   )}
                 >
@@ -195,8 +180,9 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                 </div>
                 <div
                   className={cn(
-                    "min-w-[120px] whitespace-pre-wrap rounded-2xl border bg-card px-4 py-3 leading-7 shadow-sm",
-                    item.role === "user" && "border-primary bg-primary text-primary-foreground",
+                    "min-w-[120px] whitespace-pre-wrap rounded-2xl bg-transparent px-4 py-3 leading-7",
+                    item.role === "assistant" && "border border-slate-200 bg-white shadow-sm dark:border-[#34363c] dark:bg-[#232428]",
+                    item.role === "user" && "max-w-[70%] bg-primary text-primary-foreground shadow-sm",
                   )}
                 >
                   {messageText(item)}
@@ -206,28 +192,32 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
           )}
         </div>
 
-        <footer className="flex items-end gap-3 border-t bg-card px-6 py-5">
-          <Textarea
-            value={draft}
-            disabled={!activeSessionId || streaming}
-            placeholder="输入消息，按 Enter 发送"
-            rows={2}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void sendMessage();
-              }
-            }}
-          />
-          <Button
-            type="button"
-            disabled={!activeSessionId || !draft.trim()}
-            onClick={() => void sendMessage()}
-          >
-            <Send className="h-4 w-4" aria-hidden="true" />
-            发送
-          </Button>
+        <footer className="bg-background px-6 pb-6 pt-3 dark:bg-[#1e1f23]">
+          <div className="mx-auto flex max-w-[760px] items-end gap-3 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm dark:border-[#34363c] dark:bg-[#232428]">
+            <Textarea
+              value={draft}
+              disabled={!activeSessionId || streaming}
+              placeholder="输入消息，按 Enter 发送"
+              rows={2}
+              className="border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void sendMessage();
+                }
+              }}
+            />
+            <Button
+              type="button"
+              disabled={!activeSessionId || !draft.trim()}
+              className="h-10 rounded-xl px-4"
+              onClick={() => void sendMessage()}
+            >
+              <Send className="h-4 w-4" aria-hidden="true" />
+              发送
+            </Button>
+          </div>
         </footer>
       </section>
     </div>

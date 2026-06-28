@@ -14,10 +14,11 @@ import {
   PlusSquare,
   Puzzle,
   Settings,
+  Sun,
   Trash2,
   UserRound,
 } from "lucide-react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Outlet, useLocation, useNavigate, useParams } from "react-router-dom";
 import { mosaicApi, type ApiClient } from "@mosaic-dock/api-client";
 import type { Session } from "@mosaic-dock/shared";
 import {
@@ -26,10 +27,11 @@ import {
   type SessionGroupManageApi,
 } from "../components/session/SessionGroupManageDialog";
 import { RoutePath } from "../constants/routes";
+import { useTheme } from "../hooks/useTheme";
 import { cn } from "../lib/utils";
 
 const navigation = [
-  { key: "new-session", label: "新建任务", icon: PlusSquare, path: RoutePath.NEW_SESSION },
+  { key: "new-session", label: "新建任务", icon: PlusSquare, path: `${RoutePath.CHAT}/new-session` },
   { key: "characters", label: "助手", icon: UserRound },
   { key: "bots", label: "机器人", icon: Bot },
   { key: "knowledge-base", label: "知识库", icon: BookOpen },
@@ -88,6 +90,8 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
   const [deleteWorkspace, setDeleteWorkspace] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const { sessionId } = useParams();
+  const { isDark, toggleDark } = useTheme();
   const displayGroups = useMemo(
     () => [
       ...sessionGroups,
@@ -97,7 +101,11 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
   );
 
   const activeKey = useMemo(() => {
-    if (location.pathname === RoutePath.NEW_SESSION || location.pathname === RoutePath.ROOT) {
+    if (
+      location.pathname === RoutePath.NEW_SESSION ||
+      location.pathname === `${RoutePath.CHAT}/new-session` ||
+      location.pathname === RoutePath.ROOT
+    ) {
       return "new-session";
     }
     if (location.pathname.startsWith(RoutePath.CHAT)) return "chat";
@@ -139,6 +147,10 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
     if (!path) return;
     void navigate(path);
     setSidebarOpen(false);
+  }
+
+  function selectSession(session: Session) {
+    void navigate(`${RoutePath.CHAT}/${session.id}`);
   }
 
   function openRenameDialog(session: Session) {
@@ -218,13 +230,13 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
 
   return (
     <WorkspaceSidebarContext.Provider value={sidebarContext}>
-      <div className="relative min-h-screen bg-background text-foreground">
+      <div className="relative flex min-h-screen bg-background text-foreground dark:bg-[#1e1f23] dark:text-[#e8e9ed]">
       <button
         type="button"
         aria-hidden={!sidebarOpen}
         tabIndex={sidebarOpen ? 0 : -1}
         className={cn(
-          "fixed inset-0 z-30 cursor-default bg-black/35 transition-opacity duration-300 ease-out",
+          "fixed inset-0 z-30 cursor-default bg-black/35 transition-opacity duration-300 ease-out lg:hidden",
           sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0",
         )}
         onClick={() => setSidebarOpen(false)}
@@ -233,10 +245,11 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
       <aside
         aria-hidden={!sidebarOpen}
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex w-[280px] flex-col bg-white shadow-2xl transition-transform duration-300 ease-out will-change-transform",
-          sidebarOpen ? "translate-x-0" : "-translate-x-full",
+          "fixed inset-y-0 left-0 z-40 flex w-[280px] flex-col overflow-hidden bg-white shadow-2xl transition-transform duration-300 ease-out will-change-transform dark:bg-[#1e1f23] dark:shadow-[0_12px_32px_rgba(0,0,0,0.45)] lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:shrink-0 lg:translate-x-0 lg:shadow-none lg:transition-[width]",
+          sidebarOpen ? "translate-x-0 lg:w-[280px]" : "-translate-x-full lg:w-0 lg:translate-x-0",
         )}
       >
+        <div className="flex h-full w-[280px] shrink-0 flex-col">
           <div className="flex-1 overflow-auto px-3 py-3">
             <nav aria-label="主导航" className="space-y-1">
               {navigation.map((item) => {
@@ -250,8 +263,8 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
                     className={cn(
                       "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-semibold transition-colors",
                       active
-                        ? "bg-slate-100 text-foreground"
-                        : "text-foreground hover:bg-slate-100",
+                        ? "bg-slate-100 text-foreground dark:bg-[#2a2c30] dark:text-[#e8e9ed]"
+                        : "text-foreground hover:bg-slate-100 dark:text-[#e8e9ed] dark:hover:bg-[#2a2c30]",
                       !item.path && "cursor-default opacity-90",
                     )}
                     onClick={() => handleNavigate(item.path)}
@@ -276,12 +289,19 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
                           groupSessions.map((session) => (
                     <div
                       key={session.id}
-                      className="group/session relative flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-100"
+                      className={cn(
+                        "group/session relative flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-sm text-foreground hover:bg-slate-100 dark:text-[#e8e9ed] dark:hover:bg-[#2a2c30]",
+                        session.id === sessionId && "bg-slate-100 dark:bg-[#2a2c30]",
+                      )}
                     >
                       <button
                         type="button"
-                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                        onClick={() => handleNavigate(RoutePath.CHAT)}
+                        aria-label={`打开会话 ${session.title || "未命名任务"}`}
+                        className={cn(
+                          "flex min-w-0 flex-1 items-center gap-2 rounded-md text-left",
+                          session.id === sessionId && "font-semibold",
+                        )}
+                        onClick={() => selectSession(session)}
                       >
                         <span className="h-1 w-1 rounded-full bg-slate-300" aria-hidden="true" />
                         <span className="truncate">{session.title || "未命名任务"}</span>
@@ -344,26 +364,35 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
           </div>
 
           <footer className="flex items-center justify-between gap-1 px-3 py-3 text-sm text-muted-foreground">
-            <button type="button" className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100">
-              <Moon className="h-4 w-4" aria-hidden="true" />
-              暗色
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-[#2a2c30]"
+              onClick={toggleDark}
+            >
+              {isDark ? (
+                <Sun className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <Moon className="h-4 w-4" aria-hidden="true" />
+              )}
+              {isDark ? "亮色" : "暗色"}
             </button>
-            <button type="button" className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100">
+            <button type="button" className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-[#2a2c30]">
               <Settings className="h-4 w-4" aria-hidden="true" />
               设置
             </button>
             <button
               type="button"
-              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100"
+              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-[#2a2c30]"
               onClick={() => setGroupManageOpen(true)}
             >
               <Folder className="h-4 w-4" aria-hidden="true" />
               分组
             </button>
-            <button type="button" aria-label="用户中心" className="grid h-9 w-9 place-items-center rounded-full bg-slate-100">
+            <button type="button" aria-label="用户中心" className="grid h-9 w-9 place-items-center rounded-full bg-slate-100 dark:bg-[#2a2c30]">
               <CircleUserRound className="h-5 w-5" aria-hidden="true" />
             </button>
           </footer>
+        </div>
       </aside>
 
       <button
@@ -382,7 +411,7 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
         )}
       </button>
 
-      <main className="min-w-0">
+      <main className="min-w-0 flex-1">
         <Outlet />
       </main>
       <SessionGroupManageDialog
