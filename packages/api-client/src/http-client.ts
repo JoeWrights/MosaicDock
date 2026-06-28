@@ -74,6 +74,15 @@ export interface WorkspaceChildrenResponse {
   children: WorkspaceTreeNode[];
 }
 
+export interface WorkspaceFileResponse {
+  path: string;
+  name: string;
+  extension: string;
+  size: number;
+  content: string;
+  mimeType: string;
+}
+
 export interface MessageContentToolDetails {
   toolCalls: unknown[];
   toolCallsResponse: unknown[];
@@ -430,6 +439,13 @@ export class ApiClient {
     path: string,
   ): Promise<WorkspaceChildrenResponse> {
     return workspaceService.fetchWorkspaceChildren(this.requestClient, sessionId, path);
+  }
+
+  async fetchWorkspaceFile(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceFileResponse> {
+    return workspaceService.fetchWorkspaceFile(this.requestClient, sessionId, path);
   }
 
   async createMessage(

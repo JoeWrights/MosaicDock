@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -83,6 +83,14 @@ const baseApi = (): TestChatWorkspaceApi => ({
         },
       ],
     })),
+    fetchWorkspaceFile: vi.fn(async () => ({
+      path: "README.md",
+      name: "README.md",
+      extension: ".md",
+      size: 42,
+      content: "# Mosaic Dock\n\n项目说明",
+      mimeType: "text/markdown",
+    })),
     fetchMessageContentToolDetails: vi.fn(async () => ({ toolCalls: [], toolCallsResponse: [] })),
     updateMessageActiveContent: vi.fn(async () => ({ success: true })),
     updateMessage: vi.fn(async () => ({ success: true })),
@@ -150,6 +158,16 @@ describe("ChatWorkspace", () => {
     expect(api.client.fetchSession).toHaveBeenCalledWith("session-1");
     expect(api.client.fetchSessionMessages).toHaveBeenCalledWith("session-1", { limit: 50 });
     expect(container.querySelector('[class*="ant-"]')).toBeNull();
+  });
+
+  it("keeps the chat shell fixed while the message list scrolls internally", async () => {
+    const { container } = renderChat();
+
+    expect(await screen.findByRole("heading", { name: "默认会话" })).toBeInTheDocument();
+    expect(container.firstElementChild?.className).toContain("h-screen");
+    expect(container.firstElementChild?.className).toContain("overflow-hidden");
+    expect(container.firstElementChild?.className).not.toContain("min-h-screen");
+    expect(container.querySelector(".min-h-0.flex-1.overflow-auto")).toBeInTheDocument();
   });
 
   it("continues the first answer from a new-session pending user message", async () => {
@@ -235,8 +253,20 @@ describe("ChatWorkspace", () => {
         type: "tool_call" as const,
         toolCalls: [
           {
+            index: 0,
             name: "file.write",
+            arguments: "{\"path\":\"README",
             metadata: { displayMessage: { action: "已写入文件", args: "README.md" } },
+          },
+        ],
+      };
+      yield {
+        type: "tool_call" as const,
+        toolCalls: [
+          {
+            index: 0,
+            arguments: ".md\"}",
+            metadata: { displayMessage: { action: "", args: "" } },
           },
         ],
       };
@@ -262,6 +292,7 @@ describe("ChatWorkspace", () => {
     expect(await screen.findByText("已写入文件")).toBeInTheDocument();
     expect(await screen.findByText("完成")).toBeInTheDocument();
     expect(await screen.findByText("ts")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /工具调用/ })).toHaveLength(1);
     expect(await screen.findByText("Prompt 10")).toBeInTheDocument();
     expect(await screen.findByText("Completion 20")).toBeInTheDocument();
     expect(await screen.findByText("Total 30")).toBeInTheDocument();
@@ -293,6 +324,88 @@ describe("ChatWorkspace", () => {
       expect(api.client.fetchWorkspaceChildren).toHaveBeenCalledWith("session-1", "src");
     });
     expect(await screen.findByText("index.tsx")).toBeInTheDocument();
+  });
+
+  it("opens a workspace file preview and returns to the tree", async () => {
+    const api = baseApi();
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.click(await screen.findByRole("button", { name: "文件 README.md" }));
+
+    await waitFor(() => {
+      expect(api.client.fetchWorkspaceFile).toHaveBeenCalledWith("session-1", "README.md");
+    });
+    expect(screen.getByRole("heading", { name: "README.md" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Mosaic Dock" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "文件 README.md" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "关闭文件预览" }));
+
+    expect(screen.getByRole("heading", { name: "工作目录" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "文件 README.md" })).toBeInTheDocument();
+  });
+
+  it("renders markdown files in preview mode and switches to source", async () => {
+    const api = baseApi();
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.click(await screen.findByRole("button", { name: "文件 README.md" }));
+
+    expect(await screen.findByRole("heading", { name: "Mosaic Dock" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "预览" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "源码" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByText("# Mosaic Dock")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "源码" }));
+
+    expect(screen.getByRole("button", { name: "预览" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "源码" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText(/# Mosaic Dock/)).toBeInTheDocument();
+  });
+
+  it("highlights source code previews based on the file extension", async () => {
+    const api = baseApi();
+    api.client.fetchWorkspaceFile.mockResolvedValueOnce({
+      path: "src/index.tsx",
+      name: "index.tsx",
+      extension: ".tsx",
+      size: 48,
+      content: "export function App() {\n  return <main>Hello</main>;\n}",
+      mimeType: "text/typescript",
+    });
+    const user = userEvent.setup();
+    const { container } = renderChat(api);
+
+    await user.click(await screen.findByRole("button", { name: "展开 src" }));
+    await user.click(await screen.findByRole("button", { name: "文件 index.tsx" }));
+
+    await waitFor(() => {
+      expect(api.client.fetchWorkspaceFile).toHaveBeenCalledWith("session-1", "src/index.tsx");
+    });
+    expect(container.querySelector("pre.hljs.language-typescript code")).not.toBeNull();
+    expect(container.querySelector(".hljs-keyword")?.textContent).toBe("export");
+  });
+
+  it("resizes the workspace panel with a draggable divider and persists the width", async () => {
+    localStorage.removeItem("chat-workspace-panel-width");
+    const user = userEvent.setup();
+    renderChat();
+
+    expect(await screen.findByRole("heading", { name: "工作目录" })).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-panel")).toHaveStyle({ width: "280px" });
+
+    const divider = screen.getByRole("separator", { name: "调整工作目录宽度" });
+    fireEvent.pointerDown(divider, { clientX: 800 });
+    fireEvent.pointerMove(document, { clientX: 740 });
+    fireEvent.pointerUp(document);
+
+    expect(screen.getByTestId("workspace-panel")).toHaveStyle({ width: "340px" });
+    expect(localStorage.getItem("chat-workspace-panel-width")).toBe("340");
+
+    await user.click(screen.getByRole("button", { name: "收起工作目录" }));
+    expect(screen.queryByRole("separator", { name: "调整工作目录宽度" })).not.toBeInTheDocument();
   });
 
   it("uses new-session style thinking effort and model selector interactions", async () => {

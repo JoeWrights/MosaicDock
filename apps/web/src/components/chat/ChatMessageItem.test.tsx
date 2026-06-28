@@ -86,7 +86,7 @@ describe("ChatMessageItem", () => {
     const toolNode = screen.getByText("已写入文件");
     const answerNode = container.querySelector(".markdown-text");
     expect(answerNode).not.toBeNull();
-    expect(toolNode.compareDocumentPosition(answerNode!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(answerNode!.compareDocumentPosition(toolNode)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("opens tool details and switches content versions with Guada-style pager", async () => {

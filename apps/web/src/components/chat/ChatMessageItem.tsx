@@ -465,8 +465,8 @@ function hasMetadataList(value: unknown): boolean {
 
 function getToolAction(tool: ToolCallSummary): string {
   const display = tool.metadata?.displayMessage;
-  if (typeof display === "string") return display;
-  if (display && typeof display === "object") return display.action ?? tool.name ?? "工具调用";
+  if (typeof display === "string" && display.trim()) return display;
+  if (display && typeof display === "object") return display.action || tool.name || "工具调用";
   return tool.name ?? "工具调用";
 }
 

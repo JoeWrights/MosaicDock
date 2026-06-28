@@ -117,6 +117,7 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
     if (location.pathname.startsWith(RoutePath.MODELS)) return "models";
     return "";
   }, [location.pathname]);
+  const isChatWorkspaceRoute = activeKey === "chat";
 
   useEffect(() => {
     let cancelled = false;
@@ -234,7 +235,12 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
 
   return (
     <WorkspaceSidebarContext.Provider value={sidebarContext}>
-      <div className="relative flex min-h-screen bg-background text-foreground dark:bg-[#1e1f23] dark:text-[#e8e9ed]">
+      <div
+        className={cn(
+          "relative flex bg-background text-foreground dark:bg-[#1e1f23] dark:text-[#e8e9ed]",
+          isChatWorkspaceRoute ? "h-screen min-h-0 overflow-hidden" : "min-h-screen",
+        )}
+      >
       <button
         type="button"
         aria-hidden={!sidebarOpen}
@@ -415,7 +421,7 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
         )}
       </button>
 
-      <main className="min-w-0 flex-1">
+      <main className={cn("min-w-0 flex-1", isChatWorkspaceRoute && "min-h-0 overflow-hidden")}>
         <Outlet />
       </main>
       <SessionGroupManageDialog

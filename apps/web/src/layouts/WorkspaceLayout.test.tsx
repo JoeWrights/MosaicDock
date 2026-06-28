@@ -359,11 +359,17 @@ describe("WorkspaceLayout", () => {
   });
 
   it("keeps the guada-style sidebar resident on the chat session page", async () => {
-    renderChatLayout();
+    const { container } = renderChatLayout();
 
     await screen.findByRole("heading", { name: "指数退避重试" });
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "任务列表" })).toBeInTheDocument();
+
+    expect(container.firstElementChild?.className).toContain("h-screen");
+    expect(container.firstElementChild?.className).toContain("overflow-hidden");
+    expect(container.firstElementChild?.className).not.toContain("min-h-screen");
+    expect(container.querySelector("main")?.className).toContain("min-h-0");
+    expect(container.querySelector("main")?.className).toContain("overflow-hidden");
 
     const sidebar = screen.getByRole("complementary", { hidden: true });
     expect(sidebar.className).toContain("lg:sticky");

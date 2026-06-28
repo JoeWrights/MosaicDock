@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   Bot,
@@ -24,11 +24,14 @@ import {
   type ApiClient,
   type ChatStreamService,
   type StreamEvent,
+  type WorkspaceFileResponse,
   type WorkspaceTreeNode,
 } from "@mosaic-dock/api-client";
 import type { Message, Model, ModelProvider, PaginatedResponse, Session } from "@mosaic-dock/shared";
 import { Button } from "../../components/ui/button";
 import { ChatMessageItem } from "../../components/chat/ChatMessageItem";
+import { MarkdownContent } from "../../components/chat/MarkdownContent";
+import { getLanguageFromFileName, highlightCode } from "../../components/chat/code-highlight";
 import { EmptyState } from "../../components/ui/empty-state";
 import { Spinner } from "../../components/ui/spinner";
 import { Textarea } from "../../components/ui/textarea";
@@ -46,6 +49,7 @@ export interface ChatWorkspaceApi {
     | "fetchMessageContentToolDetails"
     | "fetchWorkspaceTree"
     | "fetchWorkspaceChildren"
+    | "fetchWorkspaceFile"
     | "fetchModels"
   >;
   chatStream: Pick<ChatStreamService, "chat" | "cancelResponse">;
@@ -68,6 +72,17 @@ const thinkingEffortOptions = [
 ] as const;
 
 type ThinkingEffort = (typeof thinkingEffortOptions)[number]["value"];
+const workspacePanelWidthStorageKey = "chat-workspace-panel-width";
+const defaultWorkspacePanelWidth = 280;
+const minWorkspacePanelWidth = 220;
+const maxWorkspacePanelWidth = 520;
+
+interface SelectedWorkspaceFile {
+  node: WorkspaceTreeNode;
+  file: WorkspaceFileResponse | null;
+  loading: boolean;
+  error: string | null;
+}
 
 export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const { sessionId } = useParams();
@@ -82,9 +97,11 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const [workspaceTree, setWorkspaceTree] = useState<WorkspaceTreeNode[]>([]);
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState<SelectedWorkspaceFile | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set());
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false);
+  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(() => getStoredWorkspacePanelWidth());
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [deletingMessage, setDeletingMessage] = useState<Message | null>(null);
@@ -97,6 +114,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const modelSelectorRef = useRef<HTMLDivElement>(null);
   const thinkingSelectorRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const workspaceResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const location = useLocation();
   const pendingUserMessageRef = useRef(getPendingUserMessage(location.state));
   const consumedPendingMessageIdRef = useRef<string | null>(null);
@@ -267,6 +285,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
       setWorkspaceTree([]);
       setExpandedPaths(new Set());
       setWorkspaceError(null);
+      setSelectedWorkspaceFile(null);
       return;
     }
 
@@ -281,6 +300,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
         if (!cancelled) {
           setWorkspaceTree(response.tree);
           setExpandedPaths(new Set());
+          setSelectedWorkspaceFile(null);
         }
       } catch (error) {
         if (!cancelled) {
@@ -342,6 +362,59 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
     } finally {
       setLoadingPath(null);
     }
+  }
+
+  async function selectWorkspaceFile(node: WorkspaceTreeNode) {
+    if (!activeSessionId || node.isDirectory) return;
+
+    if (!isPreviewableWorkspaceFile(node.name)) {
+      setSelectedWorkspaceFile({
+        node,
+        file: null,
+        loading: false,
+        error: "此文件暂不支持预览",
+      });
+      return;
+    }
+
+    setSelectedWorkspaceFile({ node, file: null, loading: true, error: null });
+
+    try {
+      const file = await api.client.fetchWorkspaceFile(activeSessionId, node.path);
+      setSelectedWorkspaceFile({ node, file, loading: false, error: null });
+    } catch (error) {
+      setSelectedWorkspaceFile({
+        node,
+        file: null,
+        loading: false,
+        error: getErrorMessage(error, "加载文件失败"),
+      });
+    }
+  }
+
+  function startWorkspaceResize(event: ReactPointerEvent<HTMLDivElement>) {
+    workspaceResizeRef.current = {
+      startX: event.clientX,
+      startWidth: workspacePanelWidth,
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+
+    function handlePointerMove(pointerEvent: PointerEvent) {
+      const resizeState = workspaceResizeRef.current;
+      if (!resizeState) return;
+      const nextWidth = clampWorkspacePanelWidth(resizeState.startWidth + resizeState.startX - pointerEvent.clientX);
+      setWorkspacePanelWidth(nextWidth);
+      localStorage.setItem(workspacePanelWidthStorageKey, String(nextWidth));
+    }
+
+    function stopResize() {
+      workspaceResizeRef.current = null;
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", stopResize);
+    }
+
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", stopResize);
   }
 
   async function streamAssistantResponse(
@@ -429,7 +502,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   }
 
   return (
-    <div className="flex h-screen min-w-0 bg-white text-foreground dark:bg-[#1e1f23] dark:text-[#e8e9ed]">
+    <div className="flex h-screen min-w-0 overflow-hidden bg-white text-foreground dark:bg-[#1e1f23] dark:text-[#e8e9ed]">
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-12 items-center justify-between border-b border-slate-100 bg-white px-5 dark:border-[#2e3035] dark:bg-[#1e1f23]">
           <div className="flex min-w-0 items-center gap-3">
@@ -645,8 +718,11 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
         </div>
       </section>
 
+      {workspaceCollapsed ? null : <WorkspaceResizeHandle onPointerDown={startWorkspaceResize} />}
       <WorkspaceTreePanel
         collapsed={workspaceCollapsed}
+        width={workspacePanelWidth}
+        selectedFile={selectedWorkspaceFile}
         expandedPaths={expandedPaths}
         loading={loadingWorkspace}
         loadingPath={loadingPath}
@@ -655,6 +731,8 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
         onToggleCollapse={() => setWorkspaceCollapsed((current) => !current)}
         onRefresh={() => void refreshWorkspaceTree()}
         onToggleDirectory={(node) => void toggleWorkspaceDirectory(node)}
+        onSelectFile={(node) => void selectWorkspaceFile(node)}
+        onClosePreview={() => setSelectedWorkspaceFile(null)}
       />
       {editingMessage ? (
         <EditMessageDialog
@@ -1116,6 +1194,8 @@ function appendAssistantText(messages: Message[], messageId: string, content: st
 }
 
 function appendAssistantToolCalls(messages: Message[], messageId: string, toolCalls: unknown[]): Message[] {
+  if (toolCalls.length === 0) return messages;
+
   return messages.map((item) => {
     if (item.id !== messageId) return item;
 
@@ -1125,6 +1205,23 @@ function appendAssistantToolCalls(messages: Message[], messageId: string, toolCa
       ...createSiblingContent(lastContent, "tool"),
       metadata: { ...lastContent.metadata, toolCalls },
     };
+
+    if (hasToolMetadata(lastContent)) {
+      return {
+        ...item,
+        contents: item.contents.map((messageContent, index) =>
+          index === item.contents.length - 1
+            ? {
+                ...messageContent,
+                metadata: {
+                  ...messageContent.metadata,
+                  toolCalls: mergeToolCalls(messageContent.metadata?.toolCalls, toolCalls),
+                },
+              }
+            : messageContent,
+        ),
+      };
+    }
 
     if (isEmptyProcessContent(lastContent)) {
       return {
@@ -1140,6 +1237,102 @@ function appendAssistantToolCalls(messages: Message[], messageId: string, toolCa
       contents: [...item.contents, nextToolContent],
     };
   });
+}
+
+function mergeToolCalls(current: unknown, incoming: unknown[]): unknown[] {
+  const merged = Array.isArray(current) ? current.map((item) => cloneToolCall(item)) : [];
+
+  for (const next of incoming) {
+    const nextRecord = asRecord(next);
+    const matchIndex = nextRecord ? findMatchingToolCallIndex(merged, nextRecord) : -1;
+
+    if (matchIndex === -1) {
+      merged.push(cloneToolCall(next));
+    } else {
+      merged[matchIndex] = mergeToolCall(merged[matchIndex], next);
+    }
+  }
+
+  return merged;
+}
+
+function findMatchingToolCallIndex(items: unknown[], next: Record<string, unknown>): number {
+  return items.findIndex((item) => {
+    const current = asRecord(item);
+    if (!current) return false;
+    return (
+      hasSameToolIdentity(current, next, "index") ||
+      hasSameToolIdentity(current, next, "id") ||
+      hasSameToolIdentity(current, next, "toolCallId")
+    );
+  });
+}
+
+function hasSameToolIdentity(
+  current: Record<string, unknown>,
+  next: Record<string, unknown>,
+  key: string,
+): boolean {
+  return current[key] !== undefined && next[key] !== undefined && current[key] === next[key];
+}
+
+function mergeToolCall(current: unknown, incoming: unknown): unknown {
+  const currentRecord = asRecord(current);
+  const incomingRecord = asRecord(incoming);
+  if (!currentRecord || !incomingRecord) return cloneToolCall(incoming);
+
+  return removeUndefined({
+    ...currentRecord,
+    ...incomingRecord,
+    name: getNonEmptyValue(incomingRecord.name) ?? currentRecord.name,
+    arguments: mergeToolArguments(currentRecord.arguments, incomingRecord.arguments),
+    metadata: mergeToolMetadata(currentRecord.metadata, incomingRecord.metadata),
+  });
+}
+
+function mergeToolArguments(current: unknown, incoming: unknown): unknown {
+  if (typeof current === "string" && typeof incoming === "string") return `${current}${incoming}`;
+  return incoming ?? current;
+}
+
+function mergeToolMetadata(current: unknown, incoming: unknown): unknown {
+  const currentRecord = asRecord(current);
+  const incomingRecord = asRecord(incoming);
+  if (!currentRecord && !incomingRecord) return undefined;
+  return {
+    ...(currentRecord ?? {}),
+    ...(incomingRecord ?? {}),
+    displayMessage: getUsefulDisplayMessage(incomingRecord?.displayMessage) ?? currentRecord?.displayMessage,
+  };
+}
+
+function getNonEmptyValue(value: unknown): unknown {
+  return typeof value === "string" && value.trim() === "" ? undefined : value;
+}
+
+function getUsefulDisplayMessage(value: unknown): unknown {
+  if (typeof value === "string") return value.trim() ? value : undefined;
+
+  const display = asRecord(value);
+  if (!display) return value;
+
+  const action = typeof display.action === "string" ? display.action.trim() : "";
+  const args = typeof display.args === "string" ? display.args.trim() : "";
+  return action || args ? value : undefined;
+}
+
+function cloneToolCall(value: unknown): unknown {
+  const record = asRecord(value);
+  return record ? { ...record, metadata: cloneRecord(record.metadata) } : value;
+}
+
+function cloneRecord(value: unknown): Record<string, unknown> | undefined {
+  const record = asRecord(value);
+  return record ? { ...record } : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function appendAssistantToolResponses(
@@ -1264,6 +1457,44 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function isPreviewableWorkspaceFile(fileName: string): boolean {
+  const lowerName = fileName.toLowerCase();
+  return [
+    ".txt",
+    ".md",
+    ".markdown",
+    ".json",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".css",
+    ".html",
+    ".yml",
+    ".yaml",
+    ".xml",
+    ".csv",
+    ".log",
+  ].some((extension) => lowerName.endsWith(extension));
+}
+
+function isMarkdownWorkspaceFile(fileName: string): boolean {
+  const lowerName = fileName.toLowerCase();
+  return lowerName.endsWith(".md") || lowerName.endsWith(".markdown");
+}
+
+function getStoredWorkspacePanelWidth(): number {
+  if (typeof localStorage === "undefined") return defaultWorkspacePanelWidth;
+  const storedWidth = localStorage.getItem(workspacePanelWidthStorageKey);
+  if (!storedWidth) return defaultWorkspacePanelWidth;
+  const value = Number(storedWidth);
+  return Number.isFinite(value) ? clampWorkspacePanelWidth(value) : defaultWorkspacePanelWidth;
+}
+
+function clampWorkspacePanelWidth(width: number): number {
+  return Math.min(maxWorkspacePanelWidth, Math.max(minWorkspacePanelWidth, Math.round(width)));
+}
+
 function updateWorkspaceNodeChildren(
   nodes: WorkspaceTreeNode[],
   path: string,
@@ -1283,8 +1514,26 @@ function updateWorkspaceNodeChildren(
   });
 }
 
+function WorkspaceResizeHandle({
+  onPointerDown,
+}: {
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      role="separator"
+      aria-label="调整工作目录宽度"
+      aria-orientation="vertical"
+      className="hidden w-1 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-slate-200 dark:hover:bg-[#34363c] lg:block"
+      onPointerDown={onPointerDown}
+    />
+  );
+}
+
 interface WorkspaceTreePanelProps {
   collapsed: boolean;
+  width: number;
+  selectedFile: SelectedWorkspaceFile | null;
   expandedPaths: Set<string>;
   loading: boolean;
   loadingPath: string | null;
@@ -1293,10 +1542,14 @@ interface WorkspaceTreePanelProps {
   onToggleCollapse: () => void;
   onRefresh: () => void;
   onToggleDirectory: (node: WorkspaceTreeNode) => void;
+  onSelectFile: (node: WorkspaceTreeNode) => void;
+  onClosePreview: () => void;
 }
 
 function WorkspaceTreePanel({
   collapsed,
+  width,
+  selectedFile,
   expandedPaths,
   loading,
   loadingPath,
@@ -1305,6 +1558,8 @@ function WorkspaceTreePanel({
   onToggleCollapse,
   onRefresh,
   onToggleDirectory,
+  onSelectFile,
+  onClosePreview,
 }: WorkspaceTreePanelProps) {
   if (collapsed) {
     return (
@@ -1321,8 +1576,16 @@ function WorkspaceTreePanel({
     );
   }
 
+  if (selectedFile) {
+    return <WorkspaceFilePreview selectedFile={selectedFile} width={width} onClose={onClosePreview} />;
+  }
+
   return (
-    <div className="hidden w-[280px] shrink-0 flex-col border-l border-slate-100 bg-[#fcfcfd] dark:border-[#2e3035] dark:bg-[#202126] lg:flex">
+    <div
+      data-testid="workspace-panel"
+      className="hidden shrink-0 flex-col border-l border-slate-100 bg-[#fcfcfd] dark:border-[#2e3035] dark:bg-[#202126] lg:flex"
+      style={{ width }}
+    >
       <header className="flex h-12 items-center justify-between border-b border-slate-100 px-4 dark:border-[#2e3035]">
         <h2 className="text-sm font-semibold">工作目录</h2>
         <div className="flex items-center gap-1 text-muted-foreground">
@@ -1374,6 +1637,7 @@ function WorkspaceTreePanel({
                 expandedPaths={expandedPaths}
                 loadingPath={loadingPath}
                 onToggleDirectory={onToggleDirectory}
+                onSelectFile={onSelectFile}
               />
             ))}
           </div>
@@ -1383,12 +1647,105 @@ function WorkspaceTreePanel({
   );
 }
 
+function WorkspaceFilePreview({
+  selectedFile,
+  width,
+  onClose,
+}: {
+  selectedFile: SelectedWorkspaceFile;
+  width: number;
+  onClose: () => void;
+}) {
+  const [previewMode, setPreviewMode] = useState<"preview" | "source">("preview");
+  const isMarkdownFile = isMarkdownWorkspaceFile(selectedFile.node.name);
+  const fileContent = selectedFile.file?.content ?? "";
+
+  return (
+    <div
+      data-testid="workspace-panel"
+      className="hidden shrink-0 flex-col border-l border-slate-100 bg-[#fcfcfd] dark:border-[#2e3035] dark:bg-[#202126] lg:flex"
+      style={{ width }}
+    >
+      <header className="flex h-12 items-center justify-between border-b border-slate-100 px-4 dark:border-[#2e3035]">
+        <h2 className="truncate text-sm font-semibold">{selectedFile.node.name}</h2>
+        <div className="flex items-center gap-2">
+          {isMarkdownFile ? (
+            <div className="flex overflow-hidden rounded-md border border-slate-200 text-xs dark:border-[#34363c]">
+              <button
+                type="button"
+                aria-pressed={previewMode === "preview"}
+                className={cn(
+                  "px-2 py-1 transition-colors",
+                  previewMode === "preview"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]",
+                )}
+                onClick={() => setPreviewMode("preview")}
+              >
+                预览
+              </button>
+              <button
+                type="button"
+                aria-pressed={previewMode === "source"}
+                className={cn(
+                  "border-l border-slate-200 px-2 py-1 transition-colors dark:border-[#34363c]",
+                  previewMode === "source"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]",
+                )}
+                onClick={() => setPreviewMode("source")}
+              >
+                源码
+              </button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            aria-label="关闭文件预览"
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+            onClick={onClose}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      </header>
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        {selectedFile.loading ? (
+          <div className="grid h-full min-h-40 place-items-center">
+            <Spinner />
+          </div>
+        ) : selectedFile.error ? (
+          <div className="grid h-full min-h-40 place-items-center text-center text-sm text-muted-foreground">
+            {selectedFile.error}
+          </div>
+        ) : isMarkdownFile && previewMode === "preview" ? (
+          <MarkdownContent content={fileContent} className="rounded-lg bg-white p-3 dark:bg-[#1e1f23]" />
+        ) : (
+          <SourceCodePreview fileName={selectedFile.node.name} content={fileContent} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SourceCodePreview({ fileName, content }: { fileName: string; content: string }) {
+  const html = highlightCode(content, getLanguageFromFileName(fileName));
+
+  return (
+    <div
+      className="workspace-code-preview rounded-lg p-3 text-xs leading-5"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
 interface WorkspaceTreeRowProps {
   node: WorkspaceTreeNode;
   depth: number;
   expandedPaths: Set<string>;
   loadingPath: string | null;
   onToggleDirectory: (node: WorkspaceTreeNode) => void;
+  onSelectFile: (node: WorkspaceTreeNode) => void;
 }
 
 function WorkspaceTreeRow({
@@ -1397,6 +1754,7 @@ function WorkspaceTreeRow({
   expandedPaths,
   loadingPath,
   onToggleDirectory,
+  onSelectFile,
 }: WorkspaceTreeRowProps) {
   const expanded = expandedPaths.has(node.path);
   const loading = loadingPath === node.path;
@@ -1411,6 +1769,8 @@ function WorkspaceTreeRow({
         onClick={() => {
           if (node.isDirectory) {
             onToggleDirectory(node);
+          } else {
+            onSelectFile(node);
           }
         }}
       >
@@ -1443,6 +1803,7 @@ function WorkspaceTreeRow({
               expandedPaths={expandedPaths}
               loadingPath={loadingPath}
               onToggleDirectory={onToggleDirectory}
+              onSelectFile={onSelectFile}
             />
           ))}
         </div>

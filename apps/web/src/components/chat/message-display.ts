@@ -129,6 +129,15 @@ function flattenContent(content: MessageContent): DisplayItem[] {
     });
   }
 
+  if (content.content?.trim()) {
+    items.push({
+      id: `${content.id}-content`,
+      type: "content",
+      content: content.content,
+      source: content,
+    });
+  }
+
   const toolCalls = asArray<ToolCallSummary>(content.metadata?.toolCalls);
   const toolResponses = asArray<ToolCallResponse>(content.metadata?.toolCallsResponse);
   if (toolCalls.length > 0) {
@@ -137,15 +146,6 @@ function flattenContent(content: MessageContent): DisplayItem[] {
       type: "tool",
       toolCalls,
       toolResponses,
-      source: content,
-    });
-  }
-
-  if (content.content?.trim()) {
-    items.push({
-      id: `${content.id}-content`,
-      type: "content",
-      content: content.content,
       source: content,
     });
   }

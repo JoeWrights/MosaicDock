@@ -34,14 +34,14 @@ describe("message-display", () => {
     expect(getCurrentTurns(assistantMessage()).map((item) => item.id)).toEqual(["content-1"]);
   });
 
-  it("groups reasoning, markdown content, and tool calls for display", () => {
+  it("keeps same-content tool calls after the answer text", () => {
     const groups = groupContentsForDisplay(getCurrentTurns(assistantMessage()));
 
-    expect(groups.map((group) => group.type)).toEqual(["process", "content"]);
+    expect(groups.map((group) => group.type)).toEqual(["process", "content", "process"]);
     expect(groups[0]?.items[0]?.type).toBe("think");
-    expect(groups[0]?.items[1]?.type).toBe("tool");
     expect(groups[1]?.items[0]?.content).toBe("正文");
-    expect(groups[0]?.items[1]?.toolResponses).toEqual([
+    expect(groups[2]?.items[0]?.type).toBe("tool");
+    expect(groups[2]?.items[0]?.toolResponses).toEqual([
       { name: "file.write", content: "ok", toolCallId: "tool-1" },
     ]);
   });

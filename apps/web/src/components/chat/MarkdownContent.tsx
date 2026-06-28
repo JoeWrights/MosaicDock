@@ -1,24 +1,7 @@
 import { useMemo } from "react";
 import { Marked, type Tokens } from "marked";
-import hljs from "highlight.js/lib/core";
-import typescript from "highlight.js/lib/languages/typescript";
-import javascript from "highlight.js/lib/languages/javascript";
-import json from "highlight.js/lib/languages/json";
-import bash from "highlight.js/lib/languages/bash";
-import markdown from "highlight.js/lib/languages/markdown";
-import plaintext from "highlight.js/lib/languages/plaintext";
 import { cn } from "../../lib/utils";
-
-hljs.registerLanguage("typescript", typescript);
-hljs.registerLanguage("ts", typescript);
-hljs.registerLanguage("javascript", javascript);
-hljs.registerLanguage("js", javascript);
-hljs.registerLanguage("json", json);
-hljs.registerLanguage("bash", bash);
-hljs.registerLanguage("shell", bash);
-hljs.registerLanguage("markdown", markdown);
-hljs.registerLanguage("text", plaintext);
-hljs.registerLanguage("plaintext", plaintext);
+import { escapeHtml, highlightCode } from "./code-highlight";
 
 const marked = createMarkedInstance();
 
@@ -73,11 +56,8 @@ function createMarkedInstance(): Marked {
       },
       code(token: Tokens.Code): string {
         const language = token.lang || "text";
-        const highlighted = hljs.highlight(token.text, {
-          language: hljs.getLanguage(language) ? language : "plaintext",
-        }).value;
 
-        return `<div class="custom-code-block"><div class="code-header"><span class="code-language">${escapeHtml(language)}</span><button type="button" class="copy-code-button" aria-label="复制代码">复制</button></div><pre class="hljs language-${escapeHtml(language)}"><code>${highlighted}</code></pre></div>`;
+        return `<div class="custom-code-block"><div class="code-header"><span class="code-language">${escapeHtml(language)}</span><button type="button" class="copy-code-button" aria-label="复制代码">复制</button></div>${highlightCode(token.text, language)}</div>`;
       },
       link(token: Tokens.Link): string {
         const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
@@ -106,11 +86,3 @@ function escapeRawHtml(content: string): string {
     .join("\n");
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}

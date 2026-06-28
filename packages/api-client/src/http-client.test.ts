@@ -418,7 +418,7 @@ describe("ApiClient", () => {
     ]);
   });
 
-  it("fetches workspace tree and children with legacy endpoints", async () => {
+  it("fetches workspace tree, children, and files with legacy endpoints", async () => {
     const { adapter, calls } = createAdapter({ tree: [] });
     const client = new ApiClient({
       adapter,
@@ -428,12 +428,15 @@ describe("ApiClient", () => {
 
     await client.fetchWorkspaceTree("session-1");
     await client.fetchWorkspaceChildren("session-1", "src/components");
+    await client.fetchWorkspaceFile("session-1", "README.md");
 
     expect(calls.map((config) => config.url)).toEqual([
       "/sessions/session-1/workspace/tree",
       "/sessions/session-1/workspace/children",
+      "/sessions/session-1/workspace/file",
     ]);
     expect(calls[1]?.params).toEqual({ path: "src/components" });
+    expect(calls[2]?.params).toEqual({ path: "README.md" });
   });
 
   it("manages message content and message actions with legacy endpoints", async () => {
