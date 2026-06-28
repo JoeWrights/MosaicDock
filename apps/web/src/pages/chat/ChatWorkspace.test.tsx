@@ -126,7 +126,10 @@ const baseApi = (): TestChatWorkspaceApi => ({
   },
 } as unknown as TestChatWorkspaceApi);
 
-function renderChat(api: ChatWorkspaceApi = baseApi(), initialPath = "/chat/session-1") {
+function renderChat(
+  api: ChatWorkspaceApi = baseApi(),
+  initialPath: string | { pathname: string; state: unknown } = "/chat/session-1",
+) {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
@@ -149,6 +152,34 @@ describe("ChatWorkspace", () => {
     expect(container.querySelector('[class*="ant-"]')).toBeNull();
   });
 
+  it("continues the first answer from a new-session pending user message", async () => {
+    const api = baseApi();
+    renderChat(api, {
+      pathname: "/chat/session-new",
+      state: {
+        pendingUserMessage: {
+          id: "message-new",
+          role: "user",
+          contents: [
+            {
+              id: "content-new",
+              content: "现在几点了？",
+              state: { isStreaming: false },
+            },
+          ],
+          state: { isStreaming: false },
+        },
+      },
+    });
+
+    expect(await screen.findByText("现在几点了？")).toBeInTheDocument();
+    expect(await screen.findByText("这是新的 React 前端。")).toBeInTheDocument();
+    expect(api.chatStream.chat).toHaveBeenCalledWith({
+      sessionId: "session-new",
+      userMessage: { content: "现在几点了？" },
+    });
+  });
+
   it("sends a message and appends streamed assistant text", async () => {
     const api = baseApi();
     const user = userEvent.setup();
@@ -158,8 +189,12 @@ describe("ChatWorkspace", () => {
     await user.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(api.client.createMessage).toHaveBeenCalledWith("session-1", "介绍一下项目");
+      expect(api.chatStream.chat).toHaveBeenCalledWith({
+        sessionId: "session-1",
+        userMessage: { content: "介绍一下项目" },
+      });
     });
+    expect(api.client.createMessage).not.toHaveBeenCalled();
     expect(await screen.findByText("这是新的 React 前端。")).toBeInTheDocument();
   });
 

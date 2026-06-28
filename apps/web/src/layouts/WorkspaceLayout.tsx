@@ -32,7 +32,7 @@ import { cn } from "../lib/utils";
 
 const navigation = [
   { key: "new-session", label: "新建任务", icon: PlusSquare, path: `${RoutePath.CHAT}/new-session` },
-  { key: "characters", label: "助手", icon: UserRound },
+  { key: "characters", label: "助手", icon: UserRound, path: RoutePath.CHARACTERS_ASSISTANTS },
   { key: "bots", label: "机器人", icon: Bot },
   { key: "knowledge-base", label: "知识库", icon: BookOpen },
   { key: "plugins", label: "插件市场", icon: Puzzle },
@@ -109,6 +109,7 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
       return "new-session";
     }
     if (location.pathname.startsWith(RoutePath.CHAT)) return "chat";
+    if (location.pathname.startsWith(RoutePath.CHARACTERS)) return "characters";
     if (location.pathname.startsWith("/models")) return "models";
     return "";
   }, [location.pathname]);

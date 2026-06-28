@@ -36,6 +36,37 @@ export interface Character {
   settings?: CharacterSettings;
 }
 
+export interface CharacterListParams {
+  skip?: number;
+  limit?: number;
+  groupId?: string | null;
+}
+
+export interface CreateCharacterRequest {
+  title: string;
+  description?: string;
+  systemPrompt?: string;
+  avatarUrl?: string | null;
+  groupId?: string | null;
+  modelId?: string;
+  settings?: CharacterSettings;
+}
+
+export type UpdateCharacterRequest = Partial<CreateCharacterRequest> & {
+  isActive?: boolean;
+};
+
+export interface CreateCharacterGroupRequest {
+  name: string;
+}
+
+export type UpdateCharacterGroupRequest = Partial<CreateCharacterGroupRequest>;
+
+export interface CharacterToolsResponse {
+  characterId: string;
+  plugins: unknown[];
+}
+
 export interface CharacterListResponse {
   items: Character[];
   total: number;

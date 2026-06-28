@@ -40,7 +40,9 @@ class AxiosRestRequestClient implements RestRequestClient {
     });
 
     this.instance.interceptors.request.use((config) => {
-      config.headers.set("Content-Type", "application/json");
+      if (!(typeof FormData !== "undefined" && config.data instanceof FormData)) {
+        config.headers.set("Content-Type", "application/json");
+      }
       config.headers.set("X-Client-Id", this.clientIdProvider());
 
       const token = this.tokenProvider();

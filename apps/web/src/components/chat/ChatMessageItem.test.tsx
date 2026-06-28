@@ -34,6 +34,27 @@ const assistantMessage = (): Message => ({
 });
 
 describe("ChatMessageItem", () => {
+  it("shows a loading state before streaming answer text arrives", () => {
+    const message: Message = {
+      id: "assistant-streaming",
+      role: "assistant",
+      state: { isStreaming: true },
+      contents: [
+        {
+          id: "content-streaming",
+          content: "",
+          reasoningContent: "",
+          state: { isStreaming: true },
+        },
+      ],
+    };
+
+    const { container } = render(<ChatMessageItem message={message} />);
+
+    expect(screen.getByText("正在生成回答...")).toBeInTheDocument();
+    expect(container.querySelector(".markdown-text")).toBeNull();
+  });
+
   it("renders backend messages that omit state fields", () => {
     const { state: _messageState, contents, ...messageWithoutState } = assistantMessage();
     const [{ state: _contentState, ...firstContentWithoutState }, ...restContents] = contents;

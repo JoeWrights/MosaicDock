@@ -49,6 +49,8 @@ export function ChatMessageItem({
   const modelName = getMetadataString(activeContent?.metadata?.modelName) ?? "DeepSeek-V3.2";
   const usage = getUsage(activeContent);
   const versions = getContentVersions(message);
+  const displayGroups = groupContentsForDisplay(turns);
+  const isWaitingForAnswer = isStreamingEmptyAssistant(message, turns);
 
   if (message.role === "user") {
     return (
@@ -75,14 +77,18 @@ export function ChatMessageItem({
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-[#34363c] dark:bg-[#232428]">
           <div className="space-y-3">
-            {groupContentsForDisplay(turns).map((group) =>
-              group.type === "content" ? (
-                group.items.map((item) => (
-                  <MarkdownContent key={item.id} content={item.content ?? ""} />
-                ))
-              ) : (
-                <ProcessGroup key={group.id} items={group.items} onFetchToolDetails={onFetchToolDetails} />
-              ),
+            {isWaitingForAnswer ? (
+              <AnswerLoading />
+            ) : (
+              displayGroups.map((group) =>
+                group.type === "content" ? (
+                  group.items.map((item) => (
+                    <MarkdownContent key={item.id} content={item.content ?? ""} />
+                  ))
+                ) : (
+                  <ProcessGroup key={group.id} items={group.items} onFetchToolDetails={onFetchToolDetails} />
+                ),
+              )
             )}
           </div>
           <FinishNotice message={message} onContinue={onContinue} />
@@ -112,6 +118,19 @@ export function ChatMessageItem({
 interface ProcessGroupProps {
   items: ReturnType<typeof groupContentsForDisplay>[number]["items"];
   onFetchToolDetails?: (contentId: string) => Promise<{ toolCalls: unknown[]; toolCallsResponse: unknown[] }>;
+}
+
+function AnswerLoading() {
+  return (
+    <div className="inline-flex items-center gap-2 text-sm text-muted-foreground" role="status">
+      <span className="flex items-center gap-1" aria-hidden="true">
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.2s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.1s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" />
+      </span>
+      <span>正在生成回答...</span>
+    </div>
+  );
 }
 
 function ProcessGroup({ items, onFetchToolDetails }: ProcessGroupProps) {
@@ -426,6 +445,22 @@ function getUsage(content?: MessageContent) {
     completionTokens: typed.completionTokens ?? 0,
     totalTokens: typed.totalTokens,
   };
+}
+
+function isStreamingEmptyAssistant(message: Message, contents: MessageContent[]): boolean {
+  if (!message.state?.isStreaming) return false;
+
+  return contents.every((content) => {
+    const metadata = content.metadata ?? {};
+    const hasText = Boolean((content.content ?? "").trim());
+    const hasReasoning = Boolean((content.reasoningContent ?? "").trim());
+    const hasTools = hasMetadataList(metadata.toolCalls) || hasMetadataList(metadata.toolCallsResponse);
+    return !hasText && !hasReasoning && !hasTools;
+  });
+}
+
+function hasMetadataList(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0;
 }
 
 function getToolAction(tool: ToolCallSummary): string {

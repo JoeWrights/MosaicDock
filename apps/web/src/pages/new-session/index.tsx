@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Bot,
   Brain,
@@ -17,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { mosaicApi, type ApiClient, type SessionEventsService } from "@mosaic-dock/api-client";
-import type { Model, ModelProvider } from "@mosaic-dock/shared";
+import type { Message, Model, ModelProvider } from "@mosaic-dock/shared";
 import {
   SessionGroupManageDialog,
   type SessionGroup,
@@ -25,6 +26,7 @@ import {
 } from "../../components/session/SessionGroupManageDialog";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
+import { RoutePath } from "../../constants/routes";
 import { useWorkspaceSidebar } from "../../layouts/WorkspaceLayout";
 
 export interface NewSessionPageApi {
@@ -37,6 +39,7 @@ export interface NewSessionPageApi {
     fetchCharacters: () => Promise<unknown>;
     fetchTeams: () => Promise<unknown>;
     fetchSessions: ApiClient["fetchSessions"];
+    createSession: ApiClient["createSession"];
     createSessionGroup: SessionGroupManageApi["createSessionGroup"];
     updateSessionGroup: SessionGroupManageApi["updateSessionGroup"];
     deleteSessionGroup: SessionGroupManageApi["deleteSessionGroup"];
@@ -62,11 +65,18 @@ const thinkingEffortOptions = [
 
 type ThinkingEffort = (typeof thinkingEffortOptions)[number]["value"];
 
+interface CharacterOption {
+  id: string;
+  title: string;
+}
+
 export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
   const [draft, setDraft] = useState("");
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [displayedGreeting, setDisplayedGreeting] = useState("");
   const [modelProviders, setModelProviders] = useState<ModelProvider[]>([]);
+  const [characters, setCharacters] = useState<CharacterOption[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
@@ -83,11 +93,13 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
   const modelSelectorRef = useRef<HTMLDivElement>(null);
   const thinkingSelectorRef = useRef<HTMLDivElement>(null);
   const { sidebarOpen, toggleSidebar } = useWorkspaceSidebar();
+  const navigate = useNavigate();
 
   const models = flattenModels(modelProviders);
   const selectedModel = models.find(({ model }) => model.id === selectedModelId)?.model ?? models[0]?.model ?? null;
   const selectedModelName = selectedModel?.modelName ?? "选择模型";
   const selectedModelDisplayName = selectedModel ? getCompactModelName(selectedModel.modelName) : selectedModelName;
+  const selectedCharacter = characters.find((character) => character.title === "智能助手") ?? characters[0] ?? null;
   const filteredProviderGroups = filterProviderGroups(modelProviders, modelSearch);
   const workspaceDisplay = workspacePath ? getPathBaseName(workspacePath) : "自动创建";
   const selectedGroupName =
@@ -109,7 +121,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
 
     async function bootstrap() {
       try {
-        const [groupsResponse, , , , modelsResponse] = await Promise.all([
+        const [groupsResponse, , , , modelsResponse, charactersResponse] = await Promise.all([
           api.client.fetchSessionGroups(),
           api.client.fetchKnowledgeBases(),
           api.client.fetchSkills(),
@@ -124,6 +136,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
           const providers = modelsResponse.items ?? [];
           setSessionGroups(normalizeSessionGroups(groupsResponse));
           setModelProviders(providers);
+          setCharacters(normalizeCharacters(charactersResponse));
           setSelectedModelId((current) => current ?? flattenModels(providers)[0]?.model.id ?? null);
         }
       } catch (error) {
@@ -224,6 +237,42 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
     setWorkspaceDialogOpen(false);
   }
 
+  async function sendInitialMessage() {
+    const content = draft.trim();
+    if (!content || sending) return;
+
+    if (!selectedCharacter) {
+      setBootstrapError("未找到可用助手，请稍后重试");
+      return;
+    }
+
+    setSending(true);
+    setBootstrapError(null);
+
+    try {
+      const session = await api.client.createSession({
+        characterId: selectedCharacter.id,
+        modelId: selectedModel?.id,
+        title: content,
+        settings: { thinkingEffort },
+        ...(workspacePath ? { workspacePath } : {}),
+        ...(selectedGroupId ? { groupId: selectedGroupId } : {}),
+      });
+      navigate(`${RoutePath.CHAT}/${session.id}`, {
+        state: { pendingUserMessage: createLocalUserMessage(content) },
+      });
+    } catch (error) {
+      setBootstrapError(error instanceof Error ? error.message : "新建对话失败");
+      setSending(false);
+    }
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey) return;
+    event.preventDefault();
+    void sendInitialMessage();
+  }
+
   return (
     <div className="flex min-h-[calc(100vh-4rem)] flex-col bg-background">
       <header className="flex h-14 items-center gap-3 px-5 text-sm font-semibold text-foreground">
@@ -274,6 +323,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
             <Textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
               placeholder="按 / 使用技能，Shift+Enter 换行"
               rows={4}
               className="min-h-20 border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
@@ -405,7 +455,13 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
                 <button type="button" aria-label="模型设置" className="text-muted-foreground hover:text-foreground">
                   <Settings className="h-5 w-5" aria-hidden="true" />
                 </button>
-                <Button size="icon" className="rounded-full bg-pink-500 hover:bg-pink-500/90" disabled={!draft.trim()}>
+                <Button
+                  size="icon"
+                  className="rounded-full bg-pink-500 hover:bg-pink-500/90"
+                  disabled={!draft.trim() || sending}
+                  aria-label="发送消息"
+                  onClick={() => void sendInitialMessage()}
+                >
                   <Send className="h-4 w-4" aria-hidden="true" />
                 </Button>
               </div>
@@ -627,6 +683,44 @@ function normalizeSessionGroups(response: unknown): SessionGroup[] {
       );
     })
     .map((item) => ({ id: item.id, name: item.name }));
+}
+
+function normalizeCharacters(response: unknown): CharacterOption[] {
+  const items =
+    response && typeof response === "object" && "items" in response
+      ? (response as { items?: unknown }).items
+      : response;
+
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .filter((item): item is { id: string; title: string } => {
+      return (
+        typeof item === "object" &&
+        item !== null &&
+        "id" in item &&
+        "title" in item &&
+        typeof (item as { id: unknown }).id === "string" &&
+        typeof (item as { title: unknown }).title === "string"
+      );
+    })
+    .map((item) => ({ id: item.id, title: item.title }));
+}
+
+function createLocalUserMessage(content: string): Message {
+  const now = Date.now();
+  return {
+    id: `user-local-${now}`,
+    role: "user",
+    contents: [
+      {
+        id: `user-content-local-${now}`,
+        content,
+        state: { isStreaming: false },
+      },
+    ],
+    state: { isStreaming: false },
+  };
 }
 
 function ModelAvatar({

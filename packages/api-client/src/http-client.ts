@@ -1,5 +1,12 @@
 import type {
   CreateSessionRequest,
+  Character,
+  CharacterGroup,
+  CharacterListParams,
+  CharacterListResponse,
+  CharacterToolsResponse,
+  CreateCharacterGroupRequest,
+  CreateCharacterRequest,
   LoginRequest,
   LoginResponse,
   Message,
@@ -7,6 +14,8 @@ import type {
   PaginatedResponse,
   Session,
   SessionListResponse,
+  UpdateCharacterGroupRequest,
+  UpdateCharacterRequest,
   User,
 } from "@mosaic-dock/shared";
 import { getClientId } from "@mosaic-dock/shared";
@@ -17,6 +26,7 @@ import {
   type RestRequestOptions,
 } from "./request";
 import * as bootstrapService from "./services/bootstrap-service";
+import * as characterService from "./services/character-service";
 import * as messageService from "./services/message-service";
 import * as modelService from "./services/model-service";
 import * as sessionService from "./services/session-service";
@@ -124,8 +134,51 @@ export class ApiClient {
     return bootstrapService.fetchAppearanceSettings<T>(this.requestClient);
   }
 
-  async fetchCharacters<T = unknown>(): Promise<T> {
-    return bootstrapService.fetchCharacters<T>(this.requestClient);
+  async fetchCharacters(params: CharacterListParams = {}): Promise<CharacterListResponse> {
+    return characterService.fetchCharacters(this.requestClient, params);
+  }
+
+  async fetchCharacter(characterId: string): Promise<Character> {
+    return characterService.fetchCharacter(this.requestClient, characterId);
+  }
+
+  async createCharacter(data: CreateCharacterRequest): Promise<Character> {
+    return characterService.createCharacter(this.requestClient, data);
+  }
+
+  async updateCharacter(characterId: string, data: UpdateCharacterRequest): Promise<Character> {
+    return characterService.updateCharacter(this.requestClient, characterId, data);
+  }
+
+  async deleteCharacter<T = { success: boolean }>(characterId: string): Promise<T> {
+    return characterService.deleteCharacter<T>(this.requestClient, characterId);
+  }
+
+  async fetchCharacterGroups(): Promise<CharacterGroup[]> {
+    return characterService.fetchCharacterGroups(this.requestClient);
+  }
+
+  async createCharacterGroup(data: CreateCharacterGroupRequest): Promise<CharacterGroup> {
+    return characterService.createCharacterGroup(this.requestClient, data);
+  }
+
+  async updateCharacterGroup(
+    groupId: string,
+    data: UpdateCharacterGroupRequest,
+  ): Promise<CharacterGroup> {
+    return characterService.updateCharacterGroup(this.requestClient, groupId, data);
+  }
+
+  async deleteCharacterGroup<T = { success: boolean }>(groupId: string): Promise<T> {
+    return characterService.deleteCharacterGroup<T>(this.requestClient, groupId);
+  }
+
+  async uploadCharacterAvatar(characterId: string, file: File): Promise<{ url: string }> {
+    return characterService.uploadCharacterAvatar(this.requestClient, characterId, file);
+  }
+
+  async fetchCharacterTools(characterId: string): Promise<CharacterToolsResponse> {
+    return characterService.fetchCharacterTools(this.requestClient, characterId);
   }
 
   async fetchTeams<T = unknown>(): Promise<T> {

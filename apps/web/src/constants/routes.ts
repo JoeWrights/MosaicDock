@@ -3,6 +3,9 @@ export const RoutePath = {
   LOGIN: "/login",
   NEW_SESSION: "/new-session",
   CHAT: "/chat",
+  CHARACTERS: "/characters",
+  CHARACTERS_ASSISTANTS: "/characters/assistants",
+  CHARACTERS_TEAMS: "/characters/teams",
 } as const;
 
 export const MenuLabel = {

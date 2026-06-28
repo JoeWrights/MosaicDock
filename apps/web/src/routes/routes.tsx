@@ -1,5 +1,6 @@
 import { RoutePath } from "../constants/routes";
 import WorkspaceLayout from "../layouts/WorkspaceLayout";
+import CharactersPage from "../pages/characters";
 import ChatWorkspace from "../pages/chat";
 import NewSessionPage from "../pages/new-session";
 import type { AppRoute } from "./make-route";
@@ -16,6 +17,14 @@ const pageRoutes: AppRoute[] = [
       {
         path: RoutePath.NEW_SESSION,
         Component: NewSessionPage,
+      },
+      {
+        path: RoutePath.CHARACTERS,
+        redirect: RoutePath.CHARACTERS_ASSISTANTS,
+      },
+      {
+        path: `${RoutePath.CHARACTERS}/:tab`,
+        Component: CharactersPage,
       },
       {
         path: RoutePath.CHAT,

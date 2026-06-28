@@ -144,6 +144,79 @@ describe("ApiClient", () => {
     expect(calls[3]?.params).toEqual({ deleteWorkspace: true });
   });
 
+  it("manages characters and character groups with legacy endpoints", async () => {
+    const { adapter, calls } = createAdapter({ success: true });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+
+    await client.fetchCharacters({ groupId: "group-1", skip: 10, limit: 30 });
+    await client.fetchCharacter("character-1");
+    await client.createCharacter({
+      title: "产品经理",
+      description: "负责产品策略和用户故事",
+      systemPrompt: "你是产品经理",
+      groupId: "group-1",
+      settings: { temperature: 0.7 },
+    });
+    await client.updateCharacter("character-1", {
+      title: "资深产品经理",
+      groupId: null,
+    });
+    await client.deleteCharacter("character-2");
+    await client.fetchCharacterGroups();
+    await client.createCharacterGroup({ name: "写作" });
+    await client.updateCharacterGroup("group-1", { name: "产品" });
+    await client.deleteCharacterGroup("group-2");
+    await client.fetchCharacterTools("character-1");
+
+    expect(calls.map((config) => config.url)).toEqual([
+      "/characters",
+      "/characters/character-1",
+      "/characters",
+      "/characters/character-1",
+      "/characters/character-2",
+      "/character-groups",
+      "/character-groups",
+      "/character-groups/group-1",
+      "/character-groups/group-2",
+      "/characters/character-1/tools",
+    ]);
+    expect(calls.map((config) => config.method)).toEqual([
+      "get",
+      "get",
+      "post",
+      "put",
+      "delete",
+      "get",
+      "post",
+      "put",
+      "delete",
+      "get",
+    ]);
+    expect(calls[0]?.params).toEqual({ groupId: "group-1", skip: 10, limit: 30 });
+    expect(calls.map(requestData)).toEqual([
+      undefined,
+      undefined,
+      {
+        title: "产品经理",
+        description: "负责产品策略和用户故事",
+        systemPrompt: "你是产品经理",
+        groupId: "group-1",
+        settings: { temperature: 0.7 },
+      },
+      { title: "资深产品经理", groupId: null },
+      undefined,
+      undefined,
+      { name: "写作" },
+      { name: "产品" },
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("fetches workspace tree and children with legacy endpoints", async () => {
     const { adapter, calls } = createAdapter({ tree: [] });
     const client = new ApiClient({

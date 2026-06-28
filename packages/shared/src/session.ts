@@ -42,6 +42,8 @@ export interface CreateSessionRequest {
   modelId?: string;
   title?: string;
   settings?: Partial<SessionSettings>;
+  workspacePath?: string | null;
+  groupId?: string | null;
 }
 
 export interface SessionGroup {

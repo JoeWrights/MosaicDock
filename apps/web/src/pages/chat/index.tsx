@@ -18,7 +18,7 @@ import {
   Type,
   X,
 } from "lucide-react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import {
   mosaicApi,
   type ApiClient,
@@ -40,7 +40,6 @@ export interface ChatWorkspaceApi {
     ApiClient,
     | "fetchSession"
     | "fetchSessionMessages"
-    | "createMessage"
     | "updateMessage"
     | "deleteMessage"
     | "updateMessageActiveContent"
@@ -50,6 +49,10 @@ export interface ChatWorkspaceApi {
     | "fetchModels"
   >;
   chatStream: Pick<ChatStreamService, "chat" | "cancelResponse">;
+}
+
+interface ChatRouteState {
+  pendingUserMessage?: Message;
 }
 
 interface ChatWorkspaceProps {
@@ -93,6 +96,9 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const [thinkingPanelOpen, setThinkingPanelOpen] = useState(false);
   const modelSelectorRef = useRef<HTMLDivElement>(null);
   const thinkingSelectorRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+  const pendingUserMessageRef = useRef(getPendingUserMessage(location.state));
+  const consumedPendingMessageIdRef = useRef<string | null>(null);
 
   const activeSessionId = sessionId && sessionId !== "new-session" ? sessionId : null;
   const models = flattenModels(modelProviders);
@@ -200,6 +206,13 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
     const sessionId = activeSessionId;
 
     async function loadMessages() {
+      const pendingUserMessage = pendingUserMessageRef.current;
+      if (pendingUserMessage) {
+        setMessages([pendingUserMessage]);
+        setLoadingMessages(false);
+        return;
+      }
+
       setLoadingMessages(true);
       try {
         const response: PaginatedResponse<Message> =
@@ -221,6 +234,27 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
       cancelled = true;
     };
   }, [activeSessionId, api]);
+
+  useEffect(() => {
+    const pendingUserMessage = pendingUserMessageRef.current;
+    if (!activeSessionId || !pendingUserMessage || streaming) return;
+    if (consumedPendingMessageIdRef.current === pendingUserMessage.id) return;
+
+    consumedPendingMessageIdRef.current = pendingUserMessage.id;
+    setStreaming(true);
+    setError(null);
+
+    void (async () => {
+      try {
+        await streamAssistantResponse(pendingUserMessage, { appendUserMessage: false });
+        clearPendingRouteState();
+      } catch (error) {
+        setError(getErrorMessage(error, "消息发送失败"));
+      } finally {
+        setStreaming(false);
+      }
+    })();
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (!activeSessionId) {
@@ -304,6 +338,74 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
     }
   }
 
+  async function streamAssistantResponse(
+    userMessage: Message,
+    options: { appendUserMessage: boolean },
+  ) {
+    if (!activeSessionId) return;
+
+    const userMessageContent = getMessageText(userMessage);
+    if (!userMessageContent) {
+      throw new Error("缺少消息内容");
+    }
+
+    const assistantMessage = createStreamingAssistantMessage();
+    let streamMessageId = assistantMessage.id;
+
+    setMessages((current) =>
+      options.appendUserMessage
+        ? [...current, userMessage, assistantMessage]
+        : [...current, assistantMessage],
+    );
+
+    for await (const event of api.chatStream.chat({
+      sessionId: activeSessionId,
+      userMessage: { content: userMessageContent },
+    })) {
+      if (event.type === "user_message") {
+        setMessages((current) => replaceLocalUserMessage(current, userMessage.id, event.message));
+      }
+      if (event.type === "create") {
+        setMessages((current) =>
+          applyAssistantCreateEvent(current, assistantMessage.id, {
+            messageId: event.messageId,
+            contentId: event.contentId,
+            turnsId: event.turnsId,
+            modelName: event.modelName,
+          }),
+        );
+        streamMessageId = event.messageId;
+      }
+      if (event.type === "think") {
+        setMessages((current) => appendAssistantReasoning(current, streamMessageId, event.reasoningContent));
+      }
+      if (event.type === "text") {
+        setMessages((current) => appendAssistantText(current, streamMessageId, event.content));
+      }
+      if (event.type === "tool_call") {
+        setMessages((current) => updateAssistantMetadata(current, streamMessageId, { toolCalls: event.toolCalls }));
+      }
+      if (event.type === "tool_calls_response") {
+        setMessages((current) =>
+          updateAssistantMetadata(current, streamMessageId, {
+            toolCallsResponse: event.toolCallsResponse,
+            displayMessages: "displayMessages" in event ? event.displayMessages : undefined,
+            usage: event.usage,
+          }),
+        );
+      }
+      if (event.type === "finish") {
+        setMessages((current) =>
+          finishAssistantMessage(current, streamMessageId, {
+            usage: event.usage,
+            finishReason: event.finishReason,
+            error: event.error,
+          }),
+        );
+      }
+    }
+  }
+
   async function sendMessage() {
     const content = draft.trim();
     if (!content || !activeSessionId || streaming) return;
@@ -313,55 +415,8 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
 
     try {
       setError(null);
-      const userMessage = await api.client.createMessage(activeSessionId, content);
-      const assistantMessage = createStreamingAssistantMessage();
-      let streamMessageId = assistantMessage.id;
-
-      setMessages((current) => [...current, userMessage, assistantMessage]);
-
-      for await (const event of api.chatStream.chat({
-        sessionId: activeSessionId,
-        userMessage: { id: userMessage.id },
-      })) {
-        if (event.type === "create") {
-          setMessages((current) =>
-            applyAssistantCreateEvent(current, assistantMessage.id, {
-              messageId: event.messageId,
-              contentId: event.contentId,
-              turnsId: event.turnsId,
-              modelName: event.modelName,
-            }),
-          );
-          streamMessageId = event.messageId;
-        }
-        if (event.type === "think") {
-          setMessages((current) => appendAssistantReasoning(current, streamMessageId, event.reasoningContent));
-        }
-        if (event.type === "text") {
-          setMessages((current) => appendAssistantText(current, streamMessageId, event.content));
-        }
-        if (event.type === "tool_call") {
-          setMessages((current) => updateAssistantMetadata(current, streamMessageId, { toolCalls: event.toolCalls }));
-        }
-        if (event.type === "tool_calls_response") {
-          setMessages((current) =>
-            updateAssistantMetadata(current, streamMessageId, {
-              toolCallsResponse: event.toolCallsResponse,
-              displayMessages: "displayMessages" in event ? event.displayMessages : undefined,
-              usage: event.usage,
-            }),
-          );
-        }
-        if (event.type === "finish") {
-          setMessages((current) =>
-            finishAssistantMessage(current, streamMessageId, {
-              usage: event.usage,
-              finishReason: event.finishReason,
-              error: event.error,
-            }),
-          );
-        }
-      }
+      const userMessage = createLocalUserMessage(content);
+      await streamAssistantResponse(userMessage, { appendUserMessage: true });
     } catch (error) {
       setError(getErrorMessage(error, "消息发送失败"));
     } finally {
@@ -846,6 +901,23 @@ function getProviderNameForModel(providers: ModelProvider[], model: Model | null
   return providers.find((provider) => provider.id === model.providerId)?.name;
 }
 
+function getPendingUserMessage(state: unknown): Message | null {
+  const pendingMessage = (state as ChatRouteState | null)?.pendingUserMessage;
+  if (!pendingMessage || pendingMessage.role !== "user" || typeof pendingMessage.id !== "string") {
+    return null;
+  }
+
+  return pendingMessage;
+}
+
+function clearPendingRouteState(): void {
+  if (typeof window === "undefined") return;
+  const currentState = window.history.state;
+  if (!currentState || typeof currentState !== "object" || !("usr" in currentState)) return;
+
+  window.history.replaceState({ ...currentState, usr: null }, "", window.location.href);
+}
+
 function getCompactModelName(modelName: string): string {
   const [, compactName] = modelName.match(/\/([^/]+)$/) ?? [];
   return compactName ?? modelName;
@@ -918,6 +990,36 @@ function createStreamingAssistantMessage(): Message {
     ],
     state: { isStreaming: true },
   };
+}
+
+function createLocalUserMessage(content: string): Message {
+  const now = Date.now();
+  return {
+    id: `user-local-${now}`,
+    role: "user",
+    contents: [
+      {
+        id: `user-content-local-${now}`,
+        content,
+        state: { isStreaming: false },
+      },
+    ],
+    state: { isStreaming: false },
+  };
+}
+
+function getMessageText(message: Message): string {
+  return message.contents
+    .map((content) => content.content ?? "")
+    .join("")
+    .trim();
+}
+
+function replaceLocalUserMessage(messages: Message[], localMessageId: string, serverMessage: Message): Message[] {
+  const hasLocalMessage = messages.some((message) => message.id === localMessageId);
+  if (!hasLocalMessage) return messages;
+
+  return messages.map((message) => (message.id === localMessageId ? serverMessage : message));
 }
 
 function applyStreamEvent(messages: Message[], messageId: string, event: StreamEvent): Message[] {

@@ -1,6 +1,8 @@
 import { getClientId } from "@mosaic-dock/shared";
+import type { Message } from "@mosaic-dock/shared";
 
 export type StreamEvent =
+  | { type: "user_message"; message: Message }
   | { type: "create"; messageId: string; turnsId: string; contentId: string; modelName: string }
   | { type: "think"; reasoningContent: string }
   | { type: "text"; content: string }

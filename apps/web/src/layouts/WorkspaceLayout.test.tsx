@@ -65,6 +65,7 @@ function renderLayout() {
       <Routes>
         <Route element={<WorkspaceLayout />}>
           <Route path="/new-session" element={<TestPageHeader />} />
+          <Route path="/characters/:tab" element={<TestPageHeader />} />
           <Route path="/chat/:sessionId" element={<TestPageHeader />} />
         </Route>
       </Routes>
@@ -218,6 +219,17 @@ describe("WorkspaceLayout", () => {
     const dialog = screen.getByRole("dialog", { name: "分组管理" });
     expect(dialog).toBeInTheDocument();
     expect(await within(dialog).findByText("研发任务")).toBeInTheDocument();
+  });
+
+  it("navigates to characters assistants and highlights the assistant entry", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
+    await user.click(screen.getByRole("button", { name: "助手" }));
+
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/characters/assistants");
+    expect(screen.getByRole("button", { name: "助手", hidden: true }).className).toContain("bg-slate-100");
   });
 
   it("renders all session groups flattened like guada", async () => {

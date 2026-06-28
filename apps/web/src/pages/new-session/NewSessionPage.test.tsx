@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NewSessionPage, type NewSessionPageApi } from ".";
 
@@ -44,9 +45,30 @@ function createApi(): NewSessionPageApi {
         page: 1,
         pageSize: 20,
       })),
-      fetchCharacters: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
+      fetchCharacters: vi.fn(async () => ({
+        items: [
+          {
+            id: "character-1",
+            title: "智能助手",
+            description: "一个友好、专业的 AI 助手，可以帮助你解答各种问题。",
+          },
+        ],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+      })),
       fetchTeams: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
       fetchSessions: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 10 })),
+      createSession: vi.fn(async () => ({
+        id: "session-new",
+        title: "现在几点了？",
+        characterId: "character-1",
+        modelId: "model-1",
+        userId: "user-1",
+        settings: {},
+        createdAt: "2026-06-28T00:00:00.000Z",
+        updatedAt: "2026-06-28T00:00:00.000Z",
+      })),
       createSessionGroup: vi.fn(async () => ({ id: "group-3", name: "设计任务", sortOrder: 2 })),
       updateSessionGroup: vi.fn(async () => ({ id: "group-1", name: "研发项目", sortOrder: 0 })),
       deleteSessionGroup: vi.fn(async () => ({ success: true })),
@@ -59,6 +81,31 @@ function createApi(): NewSessionPageApi {
   };
 }
 
+function renderNewSession(api: NewSessionPageApi = createApi()) {
+  return render(
+    <MemoryRouter initialEntries={["/chat/new-session"]}>
+      <Routes>
+        <Route path="/chat/new-session" element={<NewSessionPage api={api} />} />
+        <Route path="/chat/:sessionId" element={<LocationStateProbe />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+function LocationStateProbe() {
+  const location = useLocation();
+  const state = location.state as { pendingUserMessage?: { contents?: { content: string | null }[] } } | null;
+
+  return (
+    <div>
+      <span data-testid="location-path">{location.pathname}</span>
+      <span data-testid="pending-message-content">
+        {state?.pendingUserMessage?.contents?.[0]?.content ?? ""}
+      </span>
+    </div>
+  );
+}
+
 describe("NewSessionPage", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -66,7 +113,7 @@ describe("NewSessionPage", () => {
 
   it("renders the new-session landing view", async () => {
     const api = createApi();
-    const { container } = render(<NewSessionPage api={api} />);
+    const { container } = renderNewSession(api);
 
     expect(screen.getByText("新建对话")).toBeInTheDocument();
     expect(screen.getByTestId("new-session-greeting")).toBeInTheDocument();
@@ -77,7 +124,7 @@ describe("NewSessionPage", () => {
 
   it("uses guada-aligned compact input panel styling", () => {
     const api = createApi();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     const panel = screen.getByTestId("new-session-input-panel");
     const card = screen.getByTestId("new-session-input-card");
@@ -90,7 +137,7 @@ describe("NewSessionPage", () => {
 
   it("keeps the input panel compact and only strengthens shadow on focus", () => {
     const api = createApi();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     const card = screen.getByTestId("new-session-input-card");
     const input = screen.getByPlaceholderText("按 / 使用技能，Shift+Enter 换行");
@@ -104,7 +151,7 @@ describe("NewSessionPage", () => {
   it("reveals the greeting with a typewriter effect", () => {
     vi.useFakeTimers();
     const api = createApi();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     const greeting = screen.getByTestId("new-session-greeting");
     expect(greeting).toHaveTextContent("");
@@ -128,7 +175,7 @@ describe("NewSessionPage", () => {
   it("loops the greeting typewriter animation", () => {
     vi.useFakeTimers();
     const api = createApi();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     const greeting = screen.getByTestId("new-session-greeting");
 
@@ -150,7 +197,7 @@ describe("NewSessionPage", () => {
 
   it("loads the same initial resources as the legacy new-session page", async () => {
     const api = createApi();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     await waitFor(() => {
       expect(api.sessionEvents.connect).toHaveBeenCalled();
@@ -172,7 +219,7 @@ describe("NewSessionPage", () => {
   it("opens the guada-style model selector and switches models", async () => {
     const api = createApi();
     const user = userEvent.setup();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     expect(await screen.findByRole("button", { name: /DeepSeek-V3\.2/ })).toBeInTheDocument();
 
@@ -214,7 +261,7 @@ describe("NewSessionPage", () => {
       pageSize: 20,
     });
 
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     const selectedButton = await screen.findByRole("button", { name: /DeepSeek-V3\.2/ });
     expect(selectedButton).toHaveTextContent("DeepSeek-V3.2");
@@ -228,7 +275,7 @@ describe("NewSessionPage", () => {
   it("closes the model selector when clicking outside", async () => {
     const api = createApi();
     const user = userEvent.setup();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     await user.click(await screen.findByRole("button", { name: /DeepSeek-V3\.2/ }));
     expect(screen.getByPlaceholderText("搜索模型...")).toBeInTheDocument();
@@ -241,7 +288,7 @@ describe("NewSessionPage", () => {
   it("opens the guada-style thinking effort panel and switches effort", async () => {
     const api = createApi();
     const user = userEvent.setup();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     await user.click(screen.getByRole("button", { name: "不思考" }));
 
@@ -260,7 +307,7 @@ describe("NewSessionPage", () => {
   it("shows tooltips for composer tool icons on hover", async () => {
     const api = createApi();
     const user = userEvent.setup();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     await user.hover(screen.getByRole("button", { name: "添加图片" }));
     expect(screen.getByRole("tooltip", { name: "添加图片" })).toBeInTheDocument();
@@ -272,10 +319,30 @@ describe("NewSessionPage", () => {
     expect(screen.getByRole("tooltip", { name: "知识库" })).toBeInTheDocument();
   });
 
+  it("creates a session, creates the first message, and navigates to chat on send", async () => {
+    const api = createApi();
+    const user = userEvent.setup();
+    renderNewSession(api);
+
+    await user.type(screen.getByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "现在几点了？");
+    await user.click(screen.getByRole("button", { name: "发送消息" }));
+
+    await waitFor(() => {
+      expect(api.client.createSession).toHaveBeenCalledWith({
+        characterId: "character-1",
+        modelId: "model-1",
+        title: "现在几点了？",
+        settings: { thinkingEffort: "off" },
+      });
+    });
+    expect(await screen.findByTestId("location-path")).toHaveTextContent("/chat/session-new");
+    expect(screen.getByTestId("pending-message-content")).toHaveTextContent("现在几点了？");
+  });
+
   it("opens workspace settings, validates absolute paths, and updates the display", async () => {
     const api = createApi();
     const user = userEvent.setup();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     await user.click(screen.getByRole("button", { name: /工作目录：自动创建/ }));
 
@@ -299,7 +366,7 @@ describe("NewSessionPage", () => {
   it("opens the group selector and updates the selected group", async () => {
     const api = createApi();
     const user = userEvent.setup();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     await user.click(screen.getByRole("button", { name: /分组：任务列表/ }));
 
@@ -323,7 +390,7 @@ describe("NewSessionPage", () => {
   it("opens group management from the group selector", async () => {
     const api = createApi();
     const user = userEvent.setup();
-    render(<NewSessionPage api={api} />);
+    renderNewSession(api);
 
     await user.click(screen.getByRole("button", { name: /分组：任务列表/ }));
     const selector = screen.getByRole("dialog", { name: "请选择分组" });
