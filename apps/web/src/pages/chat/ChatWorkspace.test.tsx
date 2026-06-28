@@ -4,8 +4,9 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { ChatWorkspace, type ChatWorkspaceApi } from ".";
 
-type TestChatWorkspaceApi = ChatWorkspaceApi & {
+type TestChatWorkspaceApi = {
   client: Record<string, ReturnType<typeof vi.fn>>;
+  chatStream: Record<string, ReturnType<typeof vi.fn>>;
 };
 
 const baseApi = (): TestChatWorkspaceApi => ({
@@ -135,13 +136,13 @@ const baseApi = (): TestChatWorkspaceApi => ({
 } as unknown as TestChatWorkspaceApi);
 
 function renderChat(
-  api: ChatWorkspaceApi = baseApi(),
+  api: TestChatWorkspaceApi = baseApi(),
   initialPath: string | { pathname: string; state: unknown } = "/chat/session-1",
 ) {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
-        <Route path="/chat/:sessionId" element={<ChatWorkspace api={api} />} />
+        <Route path="/chat/:sessionId" element={<ChatWorkspace api={api as unknown as ChatWorkspaceApi} />} />
       </Routes>
     </MemoryRouter>,
   );

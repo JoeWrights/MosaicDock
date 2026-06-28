@@ -290,6 +290,32 @@ export class ApiClient {
     return bootstrapService.toggleSkill<T>(this.requestClient, skillId, enabled);
   }
 
+  async reloadSkill<T = unknown>(skillId: string): Promise<T> {
+    return bootstrapService.reloadSkill<T>(this.requestClient, skillId);
+  }
+
+  async fetchSkillDocumentation<T = { content: string }>(skillId: string): Promise<T> {
+    return bootstrapService.fetchSkillDocumentation<T>(this.requestClient, skillId);
+  }
+
+  async installSkill<T = { success: boolean; message?: string; skillId?: string }>(
+    file: File,
+    force = false,
+  ): Promise<T> {
+    return bootstrapService.installSkill<T>(this.requestClient, file, force);
+  }
+
+  async installSkillFromUrl<T = { success: boolean; message?: string; skillId?: string; skillIds?: string[] }>(
+    url: string,
+    force = false,
+  ): Promise<T> {
+    return bootstrapService.installSkillFromUrl<T>(this.requestClient, url, force);
+  }
+
+  async uninstallSkill<T = { success: boolean; message?: string }>(skillId: string): Promise<T> {
+    return bootstrapService.uninstallSkill<T>(this.requestClient, skillId);
+  }
+
   async fetchAppearanceSettings<T = unknown>(): Promise<T> {
     return bootstrapService.fetchAppearanceSettings<T>(this.requestClient);
   }

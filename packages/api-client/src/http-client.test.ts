@@ -90,6 +90,11 @@ describe("ApiClient", () => {
     await client.triggerSkillScan();
     await client.toggleSkill("skill-creator", true);
     await client.toggleSkill("skill-creator", false);
+    await client.reloadSkill("skill-creator");
+    await client.fetchSkillDocumentation("skill-creator");
+    await client.installSkill(new File(["zip-bytes"], "skill.zip", { type: "application/zip" }), true);
+    await client.installSkillFromUrl("https://ai.dingd.cn/skills/content-research-writer.zip", true);
+    await client.uninstallSkill("custom-skill");
     await client.toggleMcpServer("mcp-1", true);
     await client.refreshMcpServerTools("mcp-1");
 
@@ -99,12 +104,22 @@ describe("ApiClient", () => {
       "/skills/scan",
       "/skills/skill-creator/enable",
       "/skills/skill-creator/disable",
+      "/skills/skill-creator/reload",
+      "/skills/skill-creator/documentation",
+      "/skills/install",
+      "/skills/install-from-url",
+      "/skills/custom-skill/uninstall",
       "/mcp-servers/mcp-1/toggle",
       "/mcp-servers/mcp-1/refresh-tools",
     ]);
     expect(calls.map((config) => config.method)).toEqual([
       "get",
       "put",
+      "post",
+      "post",
+      "post",
+      "post",
+      "get",
       "post",
       "post",
       "post",
@@ -117,9 +132,15 @@ describe("ApiClient", () => {
       undefined,
       undefined,
       undefined,
+      undefined,
+      undefined,
+      expect.any(FormData),
+      { url: "https://ai.dingd.cn/skills/content-research-writer.zip", force: true },
+      undefined,
       { enabled: true },
       undefined,
     ]);
+    expect(calls[7]?.headers.get("Content-Type")).toBe("multipart/form-data");
   });
 
   it("manages session groups with legacy endpoints", async () => {

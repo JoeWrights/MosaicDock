@@ -68,6 +68,57 @@ export function toggleSkill<T = unknown>(
   });
 }
 
+export function reloadSkill<T = unknown>(
+  request: RestRequestClient,
+  skillId: string,
+): Promise<T> {
+  return request.request<T>(`/skills/${skillId}/reload`, {
+    method: "POST",
+  });
+}
+
+export function fetchSkillDocumentation<T = { content: string }>(
+  request: RestRequestClient,
+  skillId: string,
+): Promise<T> {
+  return request.request<T>(`/skills/${skillId}/documentation`);
+}
+
+export function installSkill<T = { success: boolean; message?: string; skillId?: string }>(
+  request: RestRequestClient,
+  file: File,
+  force = false,
+): Promise<T> {
+  const body = new FormData();
+  body.append("file", file);
+  if (force) body.append("force", "true");
+
+  return request.request<T>("/skills/install", {
+    method: "POST",
+    body,
+  });
+}
+
+export function installSkillFromUrl<T = { success: boolean; message?: string; skillId?: string; skillIds?: string[] }>(
+  request: RestRequestClient,
+  url: string,
+  force = false,
+): Promise<T> {
+  return request.request<T>("/skills/install-from-url", {
+    method: "POST",
+    body: { url, force },
+  });
+}
+
+export function uninstallSkill<T = { success: boolean; message?: string }>(
+  request: RestRequestClient,
+  skillId: string,
+): Promise<T> {
+  return request.request<T>(`/skills/${skillId}/uninstall`, {
+    method: "POST",
+  });
+}
+
 export function fetchAppearanceSettings<T = unknown>(request: RestRequestClient): Promise<T> {
   return request.request<T>("/settings/appearance");
 }
