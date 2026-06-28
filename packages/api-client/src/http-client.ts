@@ -10,15 +10,27 @@ import type {
   User,
 } from "@mosaic-dock/shared";
 import { getClientId } from "@mosaic-dock/shared";
+import type { AxiosAdapter } from "axios";
+import {
+  createRestRequestClient,
+  type RestRequestClient,
+  type RestRequestOptions,
+} from "./request";
+import * as bootstrapService from "./services/bootstrap-service";
+import * as messageService from "./services/message-service";
+import * as modelService from "./services/model-service";
+import * as sessionService from "./services/session-service";
+import * as workspaceService from "./services/workspace-service";
 
 export interface ApiClientOptions {
   baseURL?: string;
   fetcher?: typeof fetch;
+  adapter?: AxiosAdapter;
   tokenProvider?: () => string | null;
   clientIdProvider?: () => string;
 }
 
-export interface RequestOptions extends Omit<RequestInit, "body"> {
+export interface RequestOptions extends RestRequestOptions {
   body?: unknown;
 }
 
@@ -45,37 +57,20 @@ export interface MessageContentToolDetails {
 
 export class ApiClient {
   private readonly baseURL: string;
-  private readonly fetcher: typeof fetch;
-  private readonly tokenProvider: () => string | null;
-  private readonly clientIdProvider: () => string;
+  private readonly requestClient: RestRequestClient;
 
   constructor(options: ApiClientOptions = {}) {
     this.baseURL = options.baseURL ?? "/api/v1";
-    this.fetcher = options.fetcher ?? fetch.bind(globalThis);
-    this.tokenProvider = options.tokenProvider ?? defaultTokenProvider;
-    this.clientIdProvider = options.clientIdProvider ?? getClientId;
+    this.requestClient = createRestRequestClient({
+      baseURL: this.baseURL,
+      adapter: options.adapter,
+      tokenProvider: options.tokenProvider ?? defaultTokenProvider,
+      clientIdProvider: options.clientIdProvider ?? getClientId,
+    });
   }
 
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const token = this.tokenProvider();
-    const headers = new Headers(options.headers);
-    headers.set("Content-Type", "application/json");
-    headers.set("X-Client-Id", this.clientIdProvider());
-
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-
-    const response = await this.fetcher(this.toUrl(endpoint), {
-      ...options,
-      headers,
-      body:
-        options.body === undefined || typeof options.body === "string"
-          ? options.body
-          : JSON.stringify(options.body),
-    });
-
-    return this.parseResponse<T>(response);
+    return this.requestClient.request<T>(endpoint, options);
   }
 
   async login(credentials: LoginRequest): Promise<LoginResponse> {
@@ -90,92 +85,70 @@ export class ApiClient {
   }
 
   async fetchModels(): Promise<PaginatedResponse<ModelProvider>> {
-    return this.request<PaginatedResponse<ModelProvider>>("/models");
+    return modelService.fetchModels(this.requestClient);
   }
 
   async fetchAllModels(): Promise<PaginatedResponse<ModelProvider>> {
-    return this.request<PaginatedResponse<ModelProvider>>("/models/all");
+    return modelService.fetchAllModels(this.requestClient);
   }
 
   async fetchSessionGroups<T = unknown>(): Promise<T> {
-    return this.request<T>("/session-groups");
+    return bootstrapService.fetchSessionGroups<T>(this.requestClient);
   }
 
   async createSessionGroup<T = unknown>(data: { name: string }): Promise<T> {
-    return this.request<T>("/session-groups", {
-      method: "POST",
-      body: data,
-    });
+    return bootstrapService.createSessionGroup<T>(this.requestClient, data);
   }
 
   async updateSessionGroup<T = unknown>(groupId: string, data: { name: string }): Promise<T> {
-    return this.request<T>(`/session-groups/${groupId}`, {
-      method: "PUT",
-      body: data,
-    });
+    return bootstrapService.updateSessionGroup<T>(this.requestClient, groupId, data);
   }
 
   async deleteSessionGroup<T = unknown>(groupId: string): Promise<T> {
-    return this.request<T>(`/session-groups/${groupId}`, {
-      method: "DELETE",
-    });
+    return bootstrapService.deleteSessionGroup<T>(this.requestClient, groupId);
   }
 
   async reorderSessionGroups<T = unknown>(groupIds: string[]): Promise<T> {
-    return this.request<T>("/session-groups/reorder", {
-      method: "POST",
-      body: { groupIds },
-    });
+    return bootstrapService.reorderSessionGroups<T>(this.requestClient, groupIds);
   }
 
   async fetchKnowledgeBases<T = unknown>(): Promise<T> {
-    return this.request<T>("/knowledge-bases");
+    return bootstrapService.fetchKnowledgeBases<T>(this.requestClient);
   }
 
   async fetchSkills<T = unknown>(): Promise<T> {
-    return this.request<T>("/skills");
+    return bootstrapService.fetchSkills<T>(this.requestClient);
   }
 
   async fetchAppearanceSettings<T = unknown>(): Promise<T> {
-    return this.request<T>("/settings/appearance");
+    return bootstrapService.fetchAppearanceSettings<T>(this.requestClient);
   }
 
   async fetchCharacters<T = unknown>(): Promise<T> {
-    return this.request<T>("/characters");
+    return bootstrapService.fetchCharacters<T>(this.requestClient);
   }
 
   async fetchTeams<T = unknown>(): Promise<T> {
-    return this.request<T>("/teams");
+    return bootstrapService.fetchTeams<T>(this.requestClient);
   }
 
   async createSession(data: CreateSessionRequest): Promise<Session> {
-    return this.request<Session>("/sessions", {
-      method: "POST",
-      body: data,
-    });
+    return sessionService.createSession(this.requestClient, data);
   }
 
   async fetchSession(sessionId: string): Promise<Session> {
-    return this.request<Session>(`/sessions/${sessionId}`);
+    return sessionService.fetchSession(this.requestClient, sessionId);
   }
 
   async updateSession<T = Session>(sessionId: string, data: Partial<Session>): Promise<T> {
-    return this.request<T>(`/sessions/${sessionId}`, {
-      method: "PUT",
-      body: data,
-    });
+    return sessionService.updateSession<T>(this.requestClient, sessionId, data);
   }
 
   async deleteSession<T = { success: boolean }>(
     sessionId: string,
     options: { deleteWorkspace?: boolean } = {},
   ): Promise<T> {
-    const endpoint = options.deleteWorkspace
-      ? `/sessions/${sessionId}?deleteWorkspace=true`
-      : `/sessions/${sessionId}`;
-    return this.request<T>(endpoint, {
-      method: "DELETE",
-    });
+    return sessionService.deleteSession<T>(this.requestClient, sessionId, options);
   }
 
   async fetchSessions(params: {
@@ -183,15 +156,7 @@ export class ApiClient {
     limit?: number;
     groupId?: string | null;
   } = {}): Promise<SessionListResponse> {
-    const search = new URLSearchParams();
-    if (params.skip !== undefined) search.set("skip", String(params.skip));
-    if (params.limit !== undefined) search.set("limit", String(params.limit));
-    if (params.groupId !== undefined) {
-      search.set("groupId", params.groupId === null ? "null" : params.groupId);
-    }
-
-    const query = search.toString();
-    return this.request<SessionListResponse>(query ? `/sessions?${query}` : "/sessions");
+    return sessionService.fetchSessions(this.requestClient, params);
   }
 
   async fetchSessionMessages(
@@ -202,35 +167,18 @@ export class ApiClient {
       afterMessageId?: string;
     } = {},
   ): Promise<PaginatedResponse<Message>> {
-    const search = new URLSearchParams();
-    if (options.limit !== undefined) search.set("limit", String(options.limit));
-    if (options.beforeMessageId) {
-      search.set("beforeMessageId", options.beforeMessageId);
-    }
-    if (options.afterMessageId) {
-      search.set("afterMessageId", options.afterMessageId);
-    }
-
-    const query = search.toString();
-    return this.request<PaginatedResponse<Message>>(
-      query
-        ? `/sessions/${sessionId}/messages?${query}`
-        : `/sessions/${sessionId}/messages`,
-    );
+    return sessionService.fetchSessionMessages(this.requestClient, sessionId, options);
   }
 
   async fetchWorkspaceTree(sessionId: string): Promise<WorkspaceTreeResponse> {
-    return this.request<WorkspaceTreeResponse>(`/sessions/${sessionId}/workspace/tree`);
+    return workspaceService.fetchWorkspaceTree(this.requestClient, sessionId);
   }
 
   async fetchWorkspaceChildren(
     sessionId: string,
     path: string,
   ): Promise<WorkspaceChildrenResponse> {
-    const search = new URLSearchParams({ path });
-    return this.request<WorkspaceChildrenResponse>(
-      `/sessions/${sessionId}/workspace/children?${search.toString()}`,
-    );
+    return workspaceService.fetchWorkspaceChildren(this.requestClient, sessionId, path);
   }
 
   async createMessage(
@@ -240,71 +188,39 @@ export class ApiClient {
     replaceMessageId: string | null = null,
     knowledgeBaseIds?: string[],
   ): Promise<Message> {
-    return this.request<Message>(`/sessions/${sessionId}/messages`, {
-      method: "POST",
-      body: {
-        content,
-        files,
-        replaceMessageId,
-        knowledgeBaseIds,
-      },
-    });
+    return messageService.createMessage(
+      this.requestClient,
+      sessionId,
+      content,
+      files,
+      replaceMessageId,
+      knowledgeBaseIds,
+    );
   }
 
   async updateMessage<T = Message>(messageId: string, data: Record<string, unknown>): Promise<T> {
-    return this.request<T>(`/messages/${messageId}`, {
-      method: "PUT",
-      body: data,
-    });
+    return messageService.updateMessage<T>(this.requestClient, messageId, data);
   }
 
   async deleteMessage<T = { success: boolean }>(messageId: string): Promise<T> {
-    return this.request<T>(`/messages/${messageId}`, {
-      method: "DELETE",
-    });
+    return messageService.deleteMessage<T>(this.requestClient, messageId);
   }
 
   async updateMessageActiveContent<T = { success: boolean }>(
     contentId: string,
     messageId: string,
   ): Promise<T> {
-    return this.request<T>(`/message-content/${contentId}/active`, {
-      method: "PUT",
-      body: { message_id: messageId },
-    });
+    return messageService.updateMessageActiveContent<T>(this.requestClient, contentId, messageId);
   }
 
   async fetchMessageContentToolDetails(
     contentId: string,
   ): Promise<MessageContentToolDetails> {
-    return this.request<MessageContentToolDetails>(
-      `/message-content/${contentId}/tool-details`,
-    );
+    return messageService.fetchMessageContentToolDetails(this.requestClient, contentId);
   }
 
   getBaseURL(): string {
     return this.baseURL;
-  }
-
-  private toUrl(endpoint: string): string {
-    const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
-    return `${this.baseURL}${normalizedEndpoint}`;
-  }
-
-  private async parseResponse<T>(response: Response): Promise<T> {
-    const contentType = response.headers.get("content-type") ?? "";
-    const hasJson = contentType.includes("application/json");
-    const payload = hasJson ? await response.json() : await response.text();
-
-    if (!response.ok) {
-      const message =
-        typeof payload === "object" && payload !== null
-          ? extractErrorMessage(payload as Record<string, unknown>)
-          : String(payload || `请求失败：${response.status}`);
-      throw new Error(message);
-    }
-
-    return payload as T;
   }
 }
 
@@ -319,17 +235,4 @@ function defaultTokenProvider(): string | null {
   }
 
   return null;
-}
-
-function extractErrorMessage(payload: Record<string, unknown>): string {
-  if (typeof payload.message === "string") return payload.message;
-  if (typeof payload.error === "string") return payload.error;
-  if (
-    typeof payload.message === "object" &&
-    payload.message !== null &&
-    "error" in payload.message
-  ) {
-    return String((payload.message as { error: unknown }).error);
-  }
-  return "请求失败";
 }

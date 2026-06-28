@@ -87,6 +87,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
   const models = flattenModels(modelProviders);
   const selectedModel = models.find(({ model }) => model.id === selectedModelId)?.model ?? models[0]?.model ?? null;
   const selectedModelName = selectedModel?.modelName ?? "选择模型";
+  const selectedModelDisplayName = selectedModel ? getCompactModelName(selectedModel.modelName) : selectedModelName;
   const filteredProviderGroups = filterProviderGroups(modelProviders, modelSearch);
   const workspaceDisplay = workspacePath ? getPathBaseName(workspacePath) : "自动创建";
   const selectedGroupName =
@@ -338,7 +339,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
                   onClick={() => setModelPanelOpen((open) => !open)}
                 >
                   <ModelAvatar providerName={getProviderNameForModel(modelProviders, selectedModel)} />
-                  <span className="truncate">{selectedModelName}</span>
+                  <span className="truncate">{selectedModelDisplayName}</span>
                 </button>
                 {modelPanelOpen ? (
                   <div className="absolute bottom-11 right-0 z-20 w-80 rounded-lg bg-white p-4 shadow-[0_12px_32px_rgba(0,0,0,0.15),0_4px_8px_rgba(0,0,0,0.1)] ring-1 ring-gray-200 dark:bg-[#232428] dark:ring-[#2e3035]">
@@ -584,6 +585,11 @@ function filterProviderGroups(providers: ModelProvider[], searchText: string) {
 function getProviderNameForModel(providers: ModelProvider[], model: Model | null): string | undefined {
   if (!model) return undefined;
   return providers.find((provider) => provider.id === model.providerId)?.name ?? model.providerName;
+}
+
+function getCompactModelName(modelName: string): string {
+  const [, compactName] = modelName.match(/\/([^/]+)$/) ?? [];
+  return compactName ?? modelName;
 }
 
 function getThinkingEffortLabel(effort: ThinkingEffort): string {

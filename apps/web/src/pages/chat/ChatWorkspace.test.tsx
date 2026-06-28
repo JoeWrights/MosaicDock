@@ -258,6 +258,43 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByPlaceholderText("搜索模型...")).not.toBeInTheDocument();
   });
 
+  it("shortens prefixed model names only in the selected chat model button", async () => {
+    const api = baseApi();
+    const user = userEvent.setup();
+    vi.mocked(api.client.fetchModels).mockResolvedValueOnce({
+      items: [
+        {
+          id: "provider-1",
+          name: "硅基流动",
+          apiKeySet: true,
+          isActive: true,
+          models: [
+            {
+              id: "model-1",
+              modelName: "deepseek-ai/DeepSeek-V3.2",
+              modelType: "text",
+              providerId: "provider-1",
+              isActive: true,
+            },
+          ],
+        },
+      ],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    });
+
+    renderChat(api);
+
+    const selectedButton = await screen.findByRole("button", { name: /DeepSeek-V3\.2/ });
+    expect(selectedButton).toHaveTextContent("DeepSeek-V3.2");
+    expect(selectedButton).not.toHaveTextContent("deepseek-ai/");
+
+    await user.click(selectedButton);
+
+    expect(screen.getByRole("button", { name: /deepseek-ai\/DeepSeek-V3\.2/ })).toBeInTheDocument();
+  });
+
   it("uses new-session style composer tool icons", async () => {
     const api = baseApi();
     renderChat(api);
