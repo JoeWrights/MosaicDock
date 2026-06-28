@@ -77,6 +77,51 @@ describe("ApiClient", () => {
     ]);
   });
 
+  it("manages plugin market resources with legacy endpoints", async () => {
+    const { adapter, calls } = createAdapter({ success: true });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+
+    await client.fetchGlobalPlugins();
+    await client.updateGlobalPluginStatus("file-tools", false);
+    await client.triggerSkillScan();
+    await client.toggleSkill("skill-creator", true);
+    await client.toggleSkill("skill-creator", false);
+    await client.toggleMcpServer("mcp-1", true);
+    await client.refreshMcpServerTools("mcp-1");
+
+    expect(calls.map((config) => config.url)).toEqual([
+      "/settings/plugins/global",
+      "/settings/plugins/global",
+      "/skills/scan",
+      "/skills/skill-creator/enable",
+      "/skills/skill-creator/disable",
+      "/mcp-servers/mcp-1/toggle",
+      "/mcp-servers/mcp-1/refresh-tools",
+    ]);
+    expect(calls.map((config) => config.method)).toEqual([
+      "get",
+      "put",
+      "post",
+      "post",
+      "post",
+      "patch",
+      "post",
+    ]);
+    expect(calls.map(requestData)).toEqual([
+      undefined,
+      { pluginId: "file-tools", enabled: false },
+      undefined,
+      undefined,
+      undefined,
+      { enabled: true },
+      undefined,
+    ]);
+  });
+
   it("manages session groups with legacy endpoints", async () => {
     const { adapter, calls } = createAdapter({ success: true });
     const client = new ApiClient({
@@ -108,6 +153,78 @@ describe("ApiClient", () => {
       undefined,
       { groupIds: ["group-3", "group-1"] },
     ]);
+  });
+
+  it("manages knowledge bases and files with legacy endpoints", async () => {
+    const { adapter, calls } = createAdapter({ success: true });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+    const file = new File(["hello"], "产品说明.md", { type: "text/markdown" });
+
+    await client.fetchKnowledgeBases({ skip: 0, limit: 20 });
+    await client.createKnowledgeBase({
+      name: "产品知识库",
+      description: "沉淀产品文档",
+      embeddingModelId: "embedding-1",
+    });
+    await client.updateKnowledgeBase("kb-1", {
+      name: "新版产品知识库",
+      embeddingModelId: "embedding-2",
+      chunkMaxSize: 1200,
+      isPublic: true,
+    });
+    await client.deleteKnowledgeBase("kb-2");
+    await client.fetchKnowledgeBaseFiles("kb-1", { skip: 0, limit: 50 });
+    await client.uploadKnowledgeBaseFile("kb-1", file, "需求");
+    await client.createKnowledgeBaseFolder("kb-1", { folderName: "设计稿", parentFolderId: null });
+    await client.renameKnowledgeBaseFile("kb-1", "file-1", { newName: "PRD.md" });
+    await client.deleteKnowledgeBaseFile("kb-1", "file-2");
+    await client.retryKnowledgeBaseFile("kb-1", "file-3");
+
+    expect(calls.map((config) => config.url)).toEqual([
+      "/knowledge-bases",
+      "/knowledge-bases",
+      "/knowledge-bases/kb-1",
+      "/knowledge-bases/kb-2",
+      "/knowledge-bases/kb-1/files",
+      "/knowledge-bases/kb-1/files/upload",
+      "/knowledge-bases/kb-1/files/folder",
+      "/knowledge-bases/kb-1/files/file-1/rename",
+      "/knowledge-bases/kb-1/files/file-2",
+      "/knowledge-bases/kb-1/files/file-3/retry",
+    ]);
+    expect(calls.map((config) => config.method)).toEqual([
+      "get",
+      "post",
+      "put",
+      "delete",
+      "get",
+      "post",
+      "post",
+      "post",
+      "delete",
+      "post",
+    ]);
+    expect(calls[0]?.params).toEqual({ skip: 0, limit: 20 });
+    expect(requestData(calls[1]!)).toEqual({
+      name: "产品知识库",
+      description: "沉淀产品文档",
+      embeddingModelId: "embedding-1",
+    });
+    expect(requestData(calls[2]!)).toEqual({
+      name: "新版产品知识库",
+      embedding_model_id: "embedding-2",
+      chunk_max_size: 1200,
+      is_public: true,
+    });
+    expect(calls[4]?.params).toEqual({ skip: 0, limit: 50 });
+    expect(calls[5]?.data).toBeInstanceOf(FormData);
+    expect(calls[5]?.headers.get("Content-Type")).toBe("multipart/form-data");
+    expect(requestData(calls[6]!)).toEqual({ folderName: "设计稿", parentFolderId: null });
+    expect(requestData(calls[7]!)).toEqual({ newName: "PRD.md" });
   });
 
   it("updates and deletes sessions with legacy endpoints", async () => {
@@ -157,9 +274,8 @@ describe("ApiClient", () => {
     await client.createCharacter({
       title: "产品经理",
       description: "负责产品策略和用户故事",
-      systemPrompt: "你是产品经理",
       groupId: "group-1",
-      settings: { temperature: 0.7 },
+      settings: { systemPrompt: "你是产品经理", temperature: 0.7 },
     });
     await client.updateCharacter("character-1", {
       title: "资深产品经理",
@@ -171,6 +287,7 @@ describe("ApiClient", () => {
     await client.updateCharacterGroup("group-1", { name: "产品" });
     await client.deleteCharacterGroup("group-2");
     await client.fetchCharacterTools("character-1");
+    await client.fetchMcpServers();
 
     expect(calls.map((config) => config.url)).toEqual([
       "/characters",
@@ -183,6 +300,7 @@ describe("ApiClient", () => {
       "/character-groups/group-1",
       "/character-groups/group-2",
       "/characters/character-1/tools",
+      "/mcp-servers",
     ]);
     expect(calls.map((config) => config.method)).toEqual([
       "get",
@@ -195,6 +313,7 @@ describe("ApiClient", () => {
       "put",
       "delete",
       "get",
+      "get",
     ]);
     expect(calls[0]?.params).toEqual({ groupId: "group-1", skip: 10, limit: 30 });
     expect(calls.map(requestData)).toEqual([
@@ -203,9 +322,8 @@ describe("ApiClient", () => {
       {
         title: "产品经理",
         description: "负责产品策略和用户故事",
-        systemPrompt: "你是产品经理",
         groupId: "group-1",
-        settings: { temperature: 0.7 },
+        settings: { systemPrompt: "你是产品经理", temperature: 0.7 },
       },
       { title: "资深产品经理", groupId: null },
       undefined,
@@ -214,6 +332,89 @@ describe("ApiClient", () => {
       { name: "产品" },
       undefined,
       undefined,
+      undefined,
+    ]);
+  });
+
+  it("uploads character avatars as multipart form data", async () => {
+    const { adapter, calls } = createAdapter({ url: "/uploads/avatars/avatar.jpg" });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+    const avatar = new File(["avatar-bytes"], "avatar.png", { type: "image/png" });
+
+    await client.uploadCharacterAvatar("character-1", avatar);
+
+    expect(calls[0]).toMatchObject({
+      url: "/characters/character-1/avatars",
+      method: "post",
+    });
+    expect(calls[0]?.data).toBeInstanceOf(FormData);
+    expect(calls[0]?.headers.get("Content-Type")).toBe("multipart/form-data");
+  });
+
+  it("manages bot admin instances with backend endpoints", async () => {
+    const { adapter, calls } = createAdapter({ success: true });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+
+    await client.fetchBotInstances();
+    await client.createBotInstance({
+      platform: "mock",
+      name: "测试机器人",
+      platformConfig: {},
+      defaultCharacterId: "character-1",
+      autoStart: false,
+    });
+    await client.updateBotInstance("bot-1", { name: "客服机器人", enabled: false });
+    await client.startBotInstance("bot-1");
+    await client.stopBotInstance("bot-1");
+    await client.deleteBotInstance("bot-1");
+
+    expect(calls.map((config) => config.url)).toEqual([
+      "/bot-admin/instances",
+      "/bot-admin/instances",
+      "/bot-admin/instances/bot-1",
+      "/bot-admin/instances/bot-1/start",
+      "/bot-admin/instances/bot-1/stop",
+      "/bot-admin/instances/bot-1",
+    ]);
+    expect(calls.map((config) => config.method)).toEqual([
+      "get",
+      "post",
+      "put",
+      "post",
+      "post",
+      "delete",
+    ]);
+    expect(requestData(calls[1]!)).toEqual({
+      platform: "mock",
+      name: "测试机器人",
+      platformConfig: {},
+      defaultCharacterId: "character-1",
+      autoStart: false,
+    });
+    expect(requestData(calls[2]!)).toEqual({ name: "客服机器人", enabled: false });
+  });
+
+  it("normalizes paginated MCP server responses", async () => {
+    const { adapter } = createAdapter({
+      items: [{ id: "mcp-1", name: "文件系统", enabled: true }],
+      size: 1,
+    });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+
+    await expect(client.fetchMcpServers()).resolves.toEqual([
+      { id: "mcp-1", name: "文件系统", enabled: true },
     ]);
   });
 

@@ -1,31 +1,35 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { ExternalLink, PanelLeft, Plus, Trash2, UserRound } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ExternalLink, Plus, Trash2, UserRound } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { mosaicApi, type ApiClient } from "@mosaic-dock/api-client";
 import type {
   Character,
   CharacterGroup,
   CharacterListResponse,
-  CreateCharacterRequest,
-  Session,
-  UpdateCharacterRequest,
 } from "@mosaic-dock/shared";
+import { WorkspacePageHeader } from "../../components/layout/WorkspacePageHeader";
 import { Button } from "../../components/ui/button";
 import { EmptyState } from "../../components/ui/empty-state";
 import { Input } from "../../components/ui/input";
 import { Spinner } from "../../components/ui/spinner";
-import { Textarea } from "../../components/ui/textarea";
 import { RoutePath } from "../../constants/routes";
-import { useWorkspaceSidebar } from "../../layouts/WorkspaceLayout";
 import { cn } from "../../lib/utils";
+import CharacterModal from "./CharacterModal";
 
 export interface CharactersPageApi {
   client: Pick<
     ApiClient,
     | "fetchCharacters"
+    | "fetchCharacter"
     | "fetchCharacterGroups"
+    | "fetchModels"
+    | "fetchSkills"
+    | "fetchMcpServers"
+    | "fetchCharacterTools"
+    | "createCharacterGroup"
     | "createCharacter"
     | "updateCharacter"
+    | "uploadCharacterAvatar"
     | "deleteCharacter"
     | "createSession"
   >;
@@ -33,13 +37,6 @@ export interface CharactersPageApi {
 
 interface CharactersPageProps {
   api?: CharactersPageApi;
-}
-
-interface CharacterFormState {
-  title: string;
-  description: string;
-  systemPrompt: string;
-  groupId: string;
 }
 
 const pageSize = 60;
@@ -53,17 +50,12 @@ export function CharactersPage({ api = mosaicApi }: CharactersPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Character | null>(null);
-  const [form, setForm] = useState<CharacterFormState>({
-    title: "",
-    description: "",
-    systemPrompt: "",
-    groupId: "",
-  });
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [groupDraft, setGroupDraft] = useState("");
+  const [savingGroup, setSavingGroup] = useState(false);
   const { tab } = useParams();
   const navigate = useNavigate();
-  const { toggleSidebar } = useWorkspaceSidebar();
   const activeTab = tab ?? "assistants";
   const isLoading = loadingCharacters || loadingGroups;
   const selectedGroupName = useMemo(
@@ -134,58 +126,24 @@ export function CharactersPage({ api = mosaicApi }: CharactersPageProps) {
 
   function openCreateDialog() {
     setEditingCharacter(null);
-    setForm({
-      title: "",
-      description: "",
-      systemPrompt: "",
-      groupId: selectedGroupId ?? "",
-    });
     setDialogOpen(true);
   }
 
   function openEditDialog(character: Character) {
     setEditingCharacter(character);
-    setForm({
-      title: character.title,
-      description: character.description ?? "",
-      systemPrompt: character.systemPrompt ?? "",
-      groupId: character.groupId ?? "",
-    });
     setDialogOpen(true);
   }
 
-  async function submitCharacter(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const title = form.title.trim();
-    if (!title) return;
-
-    const payload: CreateCharacterRequest | UpdateCharacterRequest = {
-      title,
-      description: form.description.trim(),
-      systemPrompt: form.systemPrompt.trim(),
-      groupId: form.groupId || null,
-    };
-
-    setSaving(true);
-    try {
-      if (editingCharacter) {
-        const updated = await api.client.updateCharacter(editingCharacter.id, payload);
-        setCharacters((current) =>
-          current.map((character) => (character.id === updated.id ? updated : character)),
-        );
-      } else {
-        const created = await api.client.createCharacter(payload as CreateCharacterRequest);
-        if ((created.groupId ?? null) === selectedGroupId) {
-          setCharacters((current) => [created, ...current]);
-        }
+  function handleCharacterSaved(character: Character) {
+    setCharacters((current) => {
+      const exists = current.some((item) => item.id === character.id);
+      if (exists) {
+        return current.map((item) => (item.id === character.id ? character : item));
       }
-      setDialogOpen(false);
-      setEditingCharacter(null);
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "助手保存失败");
-    } finally {
-      setSaving(false);
-    }
+      if ((character.groupId ?? null) !== selectedGroupId) return current;
+      return [character, ...current];
+    });
+    setEditingCharacter(null);
   }
 
   async function confirmDeleteCharacter() {
@@ -197,6 +155,25 @@ export function CharactersPage({ api = mosaicApi }: CharactersPageProps) {
       setDeleteTarget(null);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "助手删除失败");
+    }
+  }
+
+  async function submitCharacterGroup() {
+    const name = groupDraft.trim();
+    if (!name) return;
+
+    setSavingGroup(true);
+    setError(null);
+    try {
+      const created = await api.client.createCharacterGroup({ name });
+      setGroups((current) => normalizeCharacterGroups([...current, created]));
+      setSelectedGroupId(created.id);
+      setGroupDialogOpen(false);
+      setGroupDraft("");
+    } catch (groupError) {
+      setError(groupError instanceof Error ? groupError.message : "助手分组创建失败");
+    } finally {
+      setSavingGroup(false);
     }
   }
 
@@ -213,56 +190,48 @@ export function CharactersPage({ api = mosaicApi }: CharactersPageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-[#f7f8fa] px-5 py-5 text-foreground dark:bg-[#1e1f23] dark:text-[#e8e9ed] lg:px-9">
-      <header className="flex items-start justify-between gap-4 border-b border-slate-200 pb-4 dark:border-[#2f3136]">
-        <div className="flex items-start gap-3">
+    <div className="min-h-screen bg-[#f7f8fa] px-5 pb-5 text-foreground dark:bg-[#1e1f23] dark:text-[#e8e9ed]">
+      <header className="border-b border-slate-200 pb-4 dark:border-[#2f3136]">
+        <WorkspacePageHeader
+          title="助手"
+          actions={
+            <a
+              href="https://ai.dingd.cn/docs/assistant"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-sm font-normal text-pink-500 hover:text-pink-600"
+            >
+              使用说明
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            </a>
+          }
+        />
+        <nav aria-label="角色类型" className="flex items-center gap-6 text-sm">
           <button
             type="button"
-            aria-label="展开侧边栏"
-            className="mt-1 grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30] lg:hidden"
-            onClick={toggleSidebar}
+            className={cn(
+              "border-b-2 pb-2 transition-colors",
+              activeTab === "assistants"
+                ? "border-pink-500 text-pink-500"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => navigate("/characters/assistants")}
           >
-            <PanelLeft className="h-4 w-4" aria-hidden="true" />
+            助手
           </button>
-          <div>
-            <h1 className="text-xl font-bold">助手</h1>
-            <nav aria-label="角色类型" className="mt-4 flex items-center gap-6 text-sm">
-              <button
-                type="button"
-                className={cn(
-                  "border-b-2 pb-2 transition-colors",
-                  activeTab === "assistants"
-                    ? "border-pink-500 text-pink-500"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
-                )}
-                onClick={() => navigate("/characters/assistants")}
-              >
-                助手
-              </button>
-              <button
-                type="button"
-                className={cn(
-                  "border-b-2 pb-2 transition-colors",
-                  activeTab === "teams"
-                    ? "border-pink-500 text-pink-500"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
-                )}
-                onClick={() => navigate("/characters/teams")}
-              >
-                团队
-              </button>
-            </nav>
-          </div>
-        </div>
-        <a
-          href="https://ai.dingd.cn/docs/assistant"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-sm text-pink-500 hover:text-pink-600"
-        >
-          使用说明
-          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-        </a>
+          <button
+            type="button"
+            className={cn(
+              "border-b-2 pb-2 transition-colors",
+              activeTab === "teams"
+                ? "border-pink-500 text-pink-500"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+            onClick={() => navigate("/characters/teams")}
+          >
+            团队
+          </button>
+        </nav>
       </header>
 
       {activeTab === "teams" ? (
@@ -307,8 +276,14 @@ export function CharactersPage({ api = mosaicApi }: CharactersPageProps) {
                 {group.name}
               </button>
             ))}
-            <span className="text-muted-foreground">+</span>
-            <span className="text-muted-foreground">新建分组</span>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+              onClick={() => setGroupDialogOpen(true)}
+            >
+              <span aria-hidden="true">+</span>
+              新建分组
+            </button>
           </div>
 
           {error ? (
@@ -341,23 +316,36 @@ export function CharactersPage({ api = mosaicApi }: CharactersPageProps) {
         </section>
       )}
 
-      {dialogOpen ? (
-        <CharacterDialog
-          character={editingCharacter}
-          form={form}
-          groups={groups}
-          saving={saving}
-          onChange={setForm}
-          onClose={() => setDialogOpen(false)}
-          onSubmit={submitCharacter}
-        />
-      ) : null}
+      <CharacterModal
+        open={dialogOpen}
+        characterId={editingCharacter?.id ?? null}
+        groups={groups}
+        api={api}
+        onClose={() => {
+          setDialogOpen(false);
+          setEditingCharacter(null);
+        }}
+        onSaved={handleCharacterSaved}
+      />
 
       {deleteTarget ? (
         <DeleteDialog
           character={deleteTarget}
           onCancel={() => setDeleteTarget(null)}
           onConfirm={() => void confirmDeleteCharacter()}
+        />
+      ) : null}
+
+      {groupDialogOpen ? (
+        <CharacterGroupDialog
+          value={groupDraft}
+          saving={savingGroup}
+          onChange={setGroupDraft}
+          onCancel={() => {
+            setGroupDialogOpen(false);
+            setGroupDraft("");
+          }}
+          onConfirm={() => void submitCharacterGroup()}
         />
       ) : null}
     </div>
@@ -441,96 +429,6 @@ function CharacterCard({
   );
 }
 
-function CharacterDialog({
-  character,
-  form,
-  groups,
-  saving,
-  onChange,
-  onClose,
-  onSubmit,
-}: {
-  character: Character | null;
-  form: CharacterFormState;
-  groups: CharacterGroup[];
-  saving: boolean;
-  onChange: (form: CharacterFormState) => void;
-  onClose: () => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-70 grid place-items-center bg-black/30 px-4">
-      <form
-        role="dialog"
-        aria-labelledby="character-dialog-title"
-        className="w-full max-w-[640px] rounded-2xl bg-white p-6 shadow-[0_18px_48px_rgba(0,0,0,0.18)] ring-1 ring-slate-200 dark:bg-[#232428] dark:ring-[#2f3136]"
-        onSubmit={onSubmit}
-      >
-        <h2 id="character-dialog-title" className="text-lg font-bold">
-          {character ? "角色设置" : "新建助手"}
-        </h2>
-        <div className="mt-5 space-y-4">
-          <label className="block text-sm font-medium">
-            名称
-            <Input
-              value={form.title}
-              onChange={(event) => onChange({ ...form, title: event.target.value })}
-              className="mt-2"
-              placeholder="请输入助手名称"
-              autoFocus
-            />
-          </label>
-          <label className="block text-sm font-medium">
-            描述
-            <Textarea
-              value={form.description}
-              onChange={(event) => onChange({ ...form, description: event.target.value })}
-              className="mt-2 min-h-20"
-              placeholder="介绍这个助手适合处理的问题"
-            />
-          </label>
-          <label className="block text-sm font-medium">
-            系统提示词
-            <Textarea
-              value={form.systemPrompt}
-              onChange={(event) => onChange({ ...form, systemPrompt: event.target.value })}
-              className="mt-2 min-h-28"
-              placeholder="定义助手的角色、语气和工作方式"
-            />
-          </label>
-          <label className="block text-sm font-medium">
-            分组
-            <select
-              value={form.groupId}
-              onChange={(event) => onChange({ ...form, groupId: event.target.value })}
-              className="mt-2 h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-ring"
-            >
-              <option value="">未分组</option>
-              {groups.map((group) => (
-                <option key={group.id} value={group.id}>
-                  {group.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className="mt-6 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            取消
-          </Button>
-          <Button
-            type="submit"
-            className="bg-pink-500 text-white shadow-none hover:bg-pink-500/90"
-            disabled={saving || !form.title.trim()}
-          >
-            {saving ? "保存中..." : "保存设置"}
-          </Button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
 function DeleteDialog({
   character,
   onCancel,
@@ -559,6 +457,73 @@ function DeleteDialog({
           </Button>
           <Button className="bg-red-500 text-white shadow-none hover:bg-red-600" onClick={onConfirm}>
             确定删除
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CharacterGroupDialog({
+  value,
+  saving,
+  onChange,
+  onCancel,
+  onConfirm,
+}: {
+  value: string;
+  saving: boolean;
+  onChange: (value: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-70 grid place-items-center bg-white/75 px-4 backdrop-blur-[1px] dark:bg-black/50">
+      <div
+        role="dialog"
+        aria-labelledby="character-group-title"
+        className="w-full max-w-[360px] rounded-xl bg-white p-4 shadow-[0_12px_36px_rgba(15,23,42,0.22)] ring-1 ring-slate-200 dark:bg-[#232428] dark:ring-[#2f3136]"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="character-group-title" className="text-sm font-semibold">
+            新建分组
+          </h2>
+          <button
+            type="button"
+            aria-label="关闭新建分组"
+            className="rounded-md px-1 text-muted-foreground hover:text-foreground"
+            onClick={onCancel}
+          >
+            ×
+          </button>
+        </div>
+        <label className="mt-4 block text-sm">
+          请输入分组名称
+          <Input
+            aria-label="分组名称"
+            className="mt-2"
+            value={value}
+            autoFocus
+            onChange={(event) => onChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onConfirm();
+              }
+            }}
+          />
+        </label>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            取消
+          </Button>
+          <Button
+            size="sm"
+            className="bg-pink-500 text-white shadow-none hover:bg-pink-500/90"
+            disabled={saving || !value.trim()}
+            onClick={onConfirm}
+          >
+            {saving ? "创建中..." : "确定"}
           </Button>
         </div>
       </div>

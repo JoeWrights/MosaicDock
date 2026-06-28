@@ -52,8 +52,39 @@ export function fetchSkills<T = unknown>(request: RestRequestClient): Promise<T>
   return request.request<T>("/skills");
 }
 
+export function triggerSkillScan<T = unknown>(request: RestRequestClient): Promise<T> {
+  return request.request<T>("/skills/scan", {
+    method: "POST",
+  });
+}
+
+export function toggleSkill<T = unknown>(
+  request: RestRequestClient,
+  skillId: string,
+  enabled: boolean,
+): Promise<T> {
+  return request.request<T>(`/skills/${skillId}/${enabled ? "enable" : "disable"}`, {
+    method: "POST",
+  });
+}
+
 export function fetchAppearanceSettings<T = unknown>(request: RestRequestClient): Promise<T> {
   return request.request<T>("/settings/appearance");
+}
+
+export function fetchGlobalPlugins<T = unknown>(request: RestRequestClient): Promise<T> {
+  return request.request<T>("/settings/plugins/global");
+}
+
+export function updateGlobalPluginStatus<T = unknown>(
+  request: RestRequestClient,
+  pluginId: string,
+  enabled: boolean,
+): Promise<T> {
+  return request.request<T>("/settings/plugins/global", {
+    method: "PUT",
+    body: { pluginId, enabled },
+  });
 }
 
 export function fetchCharacters<T = unknown>(request: RestRequestClient): Promise<T> {

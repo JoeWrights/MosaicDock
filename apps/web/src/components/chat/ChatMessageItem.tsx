@@ -134,7 +134,7 @@ function AnswerLoading() {
 }
 
 function ProcessGroup({ items, onFetchToolDetails }: ProcessGroupProps) {
-  const [expanded, setExpanded] = useState(items.length <= 1);
+  const [expanded, setExpanded] = useState(true);
 
   return (
     <div className="rounded-lg">

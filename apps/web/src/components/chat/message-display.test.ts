@@ -37,13 +37,31 @@ describe("message-display", () => {
   it("groups reasoning, markdown content, and tool calls for display", () => {
     const groups = groupContentsForDisplay(getCurrentTurns(assistantMessage()));
 
-    expect(groups.map((group) => group.type)).toEqual(["process", "content", "process"]);
+    expect(groups.map((group) => group.type)).toEqual(["process", "content"]);
     expect(groups[0]?.items[0]?.type).toBe("think");
+    expect(groups[0]?.items[1]?.type).toBe("tool");
     expect(groups[1]?.items[0]?.content).toBe("正文");
-    expect(groups[2]?.items[0]?.type).toBe("tool");
-    expect(groups[2]?.items[0]?.toolResponses).toEqual([
+    expect(groups[0]?.items[1]?.toolResponses).toEqual([
       { name: "file.write", content: "ok", toolCallId: "tool-1" },
     ]);
+  });
+
+  it("keeps streamed tool calls between opening text and final answer", () => {
+    const groups = groupContentsForDisplay([
+      { id: "intro", content: "我先查看时间。", state: { isStreaming: true } },
+      {
+        id: "tool",
+        content: "",
+        state: { isStreaming: true },
+        metadata: { toolCalls: [{ name: "time.now" }] },
+      },
+      { id: "answer", content: "现在是 02:24。", state: { isStreaming: true } },
+    ]);
+
+    expect(groups.map((group) => group.type)).toEqual(["content", "process", "content"]);
+    expect(groups[0]?.items[0]?.content).toBe("我先查看时间。");
+    expect(groups[1]?.items[0]?.type).toBe("tool");
+    expect(groups[2]?.items[0]?.content).toBe("现在是 02:24。");
   });
 
   it("returns all user contents without turns filtering", () => {

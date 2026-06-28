@@ -7,7 +7,6 @@ import {
   FileImage,
   Folder,
   Lightbulb,
-  PanelLeft,
   Paperclip,
   Search,
   Send,
@@ -24,10 +23,10 @@ import {
   type SessionGroup,
   type SessionGroupManageApi,
 } from "../../components/session/SessionGroupManageDialog";
+import { WorkspacePageHeader } from "../../components/layout/WorkspacePageHeader";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { RoutePath } from "../../constants/routes";
-import { useWorkspaceSidebar } from "../../layouts/WorkspaceLayout";
 
 export interface NewSessionPageApi {
   client: {
@@ -92,7 +91,6 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
   const [groupManageOpen, setGroupManageOpen] = useState(false);
   const modelSelectorRef = useRef<HTMLDivElement>(null);
   const thinkingSelectorRef = useRef<HTMLDivElement>(null);
-  const { sidebarOpen, toggleSidebar } = useWorkspaceSidebar();
   const navigate = useNavigate();
 
   const models = flattenModels(modelProviders);
@@ -275,17 +273,8 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
 
   return (
     <div className="flex min-h-[calc(100vh-4rem)] flex-col bg-background">
-      <header className="flex h-14 items-center gap-3 px-5 text-sm font-semibold text-foreground">
-        <button
-          type="button"
-          aria-label={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
-          title={sidebarOpen ? "收起侧边栏" : "展开侧边栏"}
-          className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground"
-          onClick={toggleSidebar}
-        >
-          <PanelLeft className="h-4 w-4" aria-hidden="true" />
-        </button>
-        新建对话
+      <header>
+        <WorkspacePageHeader title="新建对话" className="px-5" />
       </header>
 
       <main className="flex flex-1 items-center justify-center px-6 pb-24">

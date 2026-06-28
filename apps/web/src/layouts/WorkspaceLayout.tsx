@@ -33,11 +33,11 @@ import { cn } from "../lib/utils";
 const navigation = [
   { key: "new-session", label: "新建任务", icon: PlusSquare, path: `${RoutePath.CHAT}/new-session` },
   { key: "characters", label: "助手", icon: UserRound, path: RoutePath.CHARACTERS_ASSISTANTS },
-  { key: "bots", label: "机器人", icon: Bot },
-  { key: "knowledge-base", label: "知识库", icon: BookOpen },
-  { key: "plugins", label: "插件市场", icon: Puzzle },
-  { key: "scheduler", label: "定时任务", icon: AlarmClock },
-  { key: "models", label: "模型管理", icon: Cloud },
+  { key: "bots", label: "机器人", icon: Bot, path: RoutePath.BOTS_MANAGEMENT },
+  { key: "knowledge-base", label: "知识库", icon: BookOpen, path: RoutePath.KNOWLEDGE_BASE },
+  { key: "plugins", label: "插件市场", icon: Puzzle, path: RoutePath.PLUGINS_LOCAL_TOOLS },
+  { key: "scheduler", label: "定时任务", icon: AlarmClock, path: RoutePath.SCHEDULER },
+  { key: "models", label: "模型管理", icon: Cloud, path: RoutePath.MODELS },
 ];
 
 interface WorkspaceLayoutApi {
@@ -64,7 +64,7 @@ interface WorkspaceSidebarContextValue {
   closeSidebar: () => void;
 }
 
-const WorkspaceSidebarContext = createContext<WorkspaceSidebarContextValue | null>(null);
+export const WorkspaceSidebarContext = createContext<WorkspaceSidebarContextValue | null>(null);
 const defaultSidebarContext: WorkspaceSidebarContextValue = {
   sidebarOpen: false,
   toggleSidebar: () => undefined,
@@ -77,7 +77,7 @@ export function useWorkspaceSidebar() {
 }
 
 export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionGroups, setSessionGroups] = useState<SessionGroup[]>([]);
   const [groupManageOpen, setGroupManageOpen] = useState(false);
@@ -110,7 +110,11 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
     }
     if (location.pathname.startsWith(RoutePath.CHAT)) return "chat";
     if (location.pathname.startsWith(RoutePath.CHARACTERS)) return "characters";
-    if (location.pathname.startsWith("/models")) return "models";
+    if (location.pathname.startsWith(RoutePath.BOTS_MANAGEMENT)) return "bots";
+    if (location.pathname.startsWith(RoutePath.KNOWLEDGE_BASE)) return "knowledge-base";
+    if (location.pathname.startsWith(RoutePath.PLUGINS)) return "plugins";
+    if (location.pathname.startsWith(RoutePath.SCHEDULER)) return "scheduler";
+    if (location.pathname.startsWith(RoutePath.MODELS)) return "models";
     return "";
   }, [location.pathname]);
 
@@ -147,7 +151,6 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
   function handleNavigate(path?: string) {
     if (!path) return;
     void navigate(path);
-    setSidebarOpen(false);
   }
 
   function selectSession(session: Session) {

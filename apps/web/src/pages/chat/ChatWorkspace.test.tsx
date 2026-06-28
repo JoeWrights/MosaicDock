@@ -198,6 +198,28 @@ describe("ChatWorkspace", () => {
     expect(await screen.findByText("这是新的 React 前端。")).toBeInTheDocument();
   });
 
+  it("auto scrolls to the latest message while the assistant answer streams", async () => {
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const api = baseApi();
+    const user = userEvent.setup();
+
+    try {
+      renderChat(api);
+
+      await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "继续介绍");
+      await user.keyboard("{Enter}");
+
+      await waitFor(() => {
+        expect(screen.getByText("这是新的 React 前端。")).toBeInTheDocument();
+      });
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "end", behavior: "smooth" });
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
   it("renders streamed reasoning, tool calls, markdown content, and token usage", async () => {
     const api = baseApi();
     api.chatStream.chat = vi.fn(async function* () {
@@ -208,7 +230,7 @@ describe("ChatWorkspace", () => {
         contentId: "content-real",
         modelName: "DeepSeek-V3.2",
       };
-      yield { type: "think" as const, reasoningContent: "先分析需求。" };
+      yield { type: "text" as const, content: "我先查看项目状态。" };
       yield {
         type: "tool_call" as const,
         toolCalls: [
@@ -236,13 +258,18 @@ describe("ChatWorkspace", () => {
     await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "开始");
     await user.keyboard("{Enter}");
 
-    expect(await screen.findByRole("button", { name: /已深度思考/ })).toBeInTheDocument();
+    expect(await screen.findByText("我先查看项目状态。")).toBeInTheDocument();
     expect(await screen.findByText("已写入文件")).toBeInTheDocument();
     expect(await screen.findByText("完成")).toBeInTheDocument();
     expect(await screen.findByText("ts")).toBeInTheDocument();
     expect(await screen.findByText("Prompt 10")).toBeInTheDocument();
     expect(await screen.findByText("Completion 20")).toBeInTheDocument();
     expect(await screen.findByText("Total 30")).toBeInTheDocument();
+    const intro = screen.getByText("我先查看项目状态。");
+    const tool = screen.getByText("已写入文件");
+    const answer = screen.getByText("完成");
+    expect(intro.compareDocumentPosition(tool)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(tool.compareDocumentPosition(answer)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("loads and renders the workspace tree in the right panel", async () => {

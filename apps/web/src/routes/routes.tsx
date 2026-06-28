@@ -1,8 +1,13 @@
 import { RoutePath } from "../constants/routes";
 import WorkspaceLayout from "../layouts/WorkspaceLayout";
+import BotsManagementPage from "../pages/bots/management";
 import CharactersPage from "../pages/characters";
 import ChatWorkspace from "../pages/chat";
+import KnowledgeBasePage from "../pages/knowledge-base";
+import ModelsPage from "../pages/models";
 import NewSessionPage from "../pages/new-session";
+import PluginsPage from "../pages/plugins";
+import SchedulerPage from "../pages/scheduler";
 import type { AppRoute } from "./make-route";
 
 const pageRoutes: AppRoute[] = [
@@ -27,8 +32,32 @@ const pageRoutes: AppRoute[] = [
         Component: CharactersPage,
       },
       {
+        path: RoutePath.PLUGINS,
+        redirect: RoutePath.PLUGINS_LOCAL_TOOLS,
+      },
+      {
+        path: `${RoutePath.PLUGINS}/:tab`,
+        Component: PluginsPage,
+      },
+      {
+        path: RoutePath.BOTS_MANAGEMENT,
+        Component: BotsManagementPage,
+      },
+      {
+        path: RoutePath.KNOWLEDGE_BASE,
+        Component: KnowledgeBasePage,
+      },
+      {
         path: RoutePath.CHAT,
         Component: ChatWorkspace,
+      },
+      {
+        path: RoutePath.SCHEDULER,
+        Component: SchedulerPage,
+      },
+      {
+        path: RoutePath.MODELS,
+        Component: ModelsPage,
       },
       {
         path: `${RoutePath.CHAT}/new-session`,

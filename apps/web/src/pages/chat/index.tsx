@@ -96,6 +96,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const [thinkingPanelOpen, setThinkingPanelOpen] = useState(false);
   const modelSelectorRef = useRef<HTMLDivElement>(null);
   const thinkingSelectorRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const pendingUserMessageRef = useRef(getPendingUserMessage(location.state));
   const consumedPendingMessageIdRef = useRef<string | null>(null);
@@ -195,6 +196,11 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [thinkingPanelOpen]);
+
+  useEffect(() => {
+    if (messages.length === 0 || loadingMessages) return;
+    messagesEndRef.current?.scrollIntoView?.({ block: "end", behavior: "smooth" });
+  }, [messages, loadingMessages]);
 
   useEffect(() => {
     if (!activeSessionId) {
@@ -383,16 +389,14 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
         setMessages((current) => appendAssistantText(current, streamMessageId, event.content));
       }
       if (event.type === "tool_call") {
-        setMessages((current) => updateAssistantMetadata(current, streamMessageId, { toolCalls: event.toolCalls }));
+        setMessages((current) => appendAssistantToolCalls(current, streamMessageId, event.toolCalls));
       }
       if (event.type === "tool_calls_response") {
-        setMessages((current) =>
-          updateAssistantMetadata(current, streamMessageId, {
-            toolCallsResponse: event.toolCallsResponse,
-            displayMessages: "displayMessages" in event ? event.displayMessages : undefined,
-            usage: event.usage,
-          }),
-        );
+        setMessages((current) => appendAssistantToolResponses(current, streamMessageId, {
+          toolCallsResponse: event.toolCallsResponse,
+          displayMessages: "displayMessages" in event ? event.displayMessages : undefined,
+          usage: event.usage,
+        }));
       }
       if (event.type === "finish") {
         setMessages((current) =>
@@ -480,6 +484,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                     }}
                   />
                 ))}
+                <div ref={messagesEndRef} aria-hidden="true" />
               </div>
             )}
           </div>
@@ -1033,9 +1038,9 @@ function applyStreamEvent(messages: Message[], messageId: string, event: StreamE
   }
   if (event.type === "think") return appendAssistantReasoning(messages, messageId, event.reasoningContent);
   if (event.type === "text") return appendAssistantText(messages, messageId, event.content);
-  if (event.type === "tool_call") return updateAssistantMetadata(messages, messageId, { toolCalls: event.toolCalls });
+  if (event.type === "tool_call") return appendAssistantToolCalls(messages, messageId, event.toolCalls);
   if (event.type === "tool_calls_response") {
-    return updateAssistantMetadata(messages, messageId, {
+    return appendAssistantToolResponses(messages, messageId, {
       toolCallsResponse: event.toolCallsResponse,
       displayMessages: "displayMessages" in event ? event.displayMessages : undefined,
       usage: event.usage,
@@ -1081,16 +1086,83 @@ function appendAssistantText(messages: Message[], messageId: string, content: st
   return messages.map((item) => {
     if (item.id !== messageId) return item;
 
-    const [firstContent, ...rest] = item.contents;
+    const lastContent = item.contents.at(-1);
+    if (lastContent && hasToolMetadata(lastContent)) {
+      return {
+        ...item,
+        contents: [
+          ...item.contents,
+          {
+            ...createSiblingContent(lastContent, "text"),
+            content,
+          },
+        ],
+      };
+    }
+
+    const targetIndex = Math.max(item.contents.length - 1, 0);
     return {
       ...item,
-      contents: [
-        {
-          ...firstContent,
-          content: `${firstContent?.content ?? ""}${content}`,
-        },
-        ...rest,
-      ],
+      contents: item.contents.map((messageContent, index) =>
+        index === targetIndex
+          ? {
+              ...messageContent,
+              content: `${messageContent.content ?? ""}${content}`,
+            }
+          : messageContent,
+      ),
+    };
+  });
+}
+
+function appendAssistantToolCalls(messages: Message[], messageId: string, toolCalls: unknown[]): Message[] {
+  return messages.map((item) => {
+    if (item.id !== messageId) return item;
+
+    const lastContent = item.contents.at(-1);
+    if (!lastContent) return item;
+    const nextToolContent = {
+      ...createSiblingContent(lastContent, "tool"),
+      metadata: { ...lastContent.metadata, toolCalls },
+    };
+
+    if (isEmptyProcessContent(lastContent)) {
+      return {
+        ...item,
+        contents: item.contents.map((messageContent, index) =>
+          index === item.contents.length - 1 ? nextToolContent : messageContent,
+        ),
+      };
+    }
+
+    return {
+      ...item,
+      contents: [...item.contents, nextToolContent],
+    };
+  });
+}
+
+function appendAssistantToolResponses(
+  messages: Message[],
+  messageId: string,
+  metadata: Record<string, unknown>,
+): Message[] {
+  return messages.map((item) => {
+    if (item.id !== messageId) return item;
+
+    const toolContentIndex = findLastIndex(item.contents, hasToolMetadata);
+    if (toolContentIndex === -1) return updateAssistantMetadata([item], messageId, metadata)[0] ?? item;
+
+    return {
+      ...item,
+      contents: item.contents.map((messageContent, index) =>
+        index === toolContentIndex
+          ? {
+              ...messageContent,
+              metadata: { ...messageContent.metadata, ...removeUndefined(metadata) },
+            }
+          : messageContent,
+      ),
     };
   });
 }
@@ -1113,6 +1185,33 @@ function appendAssistantReasoning(messages: Message[], messageId: string, conten
       state: { ...item.state, isThinking: true, isStreaming: true },
     };
   });
+}
+
+function createSiblingContent(content: Message["contents"][number], purpose: string): Message["contents"][number] {
+  return {
+    id: `${content.id}-${purpose}`,
+    turnsId: content.turnsId,
+    content: "",
+    reasoningContent: "",
+    metadata: { modelName: content.metadata?.modelName },
+    state: { ...content.state, isStreaming: true },
+  };
+}
+
+function hasToolMetadata(content: Message["contents"][number]): boolean {
+  const metadata = content.metadata ?? {};
+  return Array.isArray(metadata.toolCalls) && metadata.toolCalls.length > 0;
+}
+
+function isEmptyProcessContent(content: Message["contents"][number]): boolean {
+  return !content.content?.trim() && !content.reasoningContent?.trim() && !hasToolMetadata(content);
+}
+
+function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index]!)) return index;
+  }
+  return -1;
 }
 
 function updateAssistantMetadata(

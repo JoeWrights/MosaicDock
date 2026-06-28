@@ -71,7 +71,7 @@ describe("ChatMessageItem", () => {
   });
 
   it("renders assistant rich answer sections", () => {
-    render(<ChatMessageItem message={assistantMessage()} />);
+    const { container } = render(<ChatMessageItem message={assistantMessage()} />);
 
     expect(screen.getByText("智能助手")).toBeInTheDocument();
     expect(screen.getByText("DeepSeek-V3.2")).toBeInTheDocument();
@@ -83,6 +83,10 @@ describe("ChatMessageItem", () => {
     expect(screen.getByText("Prompt 10")).toBeInTheDocument();
     expect(screen.getByText("Completion 20")).toBeInTheDocument();
     expect(screen.getByText("Total 30")).toBeInTheDocument();
+    const toolNode = screen.getByText("已写入文件");
+    const answerNode = container.querySelector(".markdown-text");
+    expect(answerNode).not.toBeNull();
+    expect(toolNode.compareDocumentPosition(answerNode!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("opens tool details and switches content versions with Guada-style pager", async () => {

@@ -7,15 +7,26 @@ import type {
   CharacterToolsResponse,
   CreateCharacterGroupRequest,
   CreateCharacterRequest,
+  CreateKnowledgeBaseFolderRequest,
+  CreateKnowledgeBaseRequest,
   LoginRequest,
   LoginResponse,
+  KnowledgeBase,
+  KnowledgeBaseFile,
+  KnowledgeBaseFileListParams,
+  KnowledgeBaseFileListResponse,
+  KnowledgeBaseListParams,
+  KnowledgeBaseListResponse,
   Message,
+  McpServer,
   ModelProvider,
   PaginatedResponse,
+  RenameKnowledgeBaseFileRequest,
   Session,
   SessionListResponse,
   UpdateCharacterGroupRequest,
   UpdateCharacterRequest,
+  UpdateKnowledgeBaseRequest,
   User,
 } from "@mosaic-dock/shared";
 import { getClientId } from "@mosaic-dock/shared";
@@ -25,9 +36,12 @@ import {
   type RestRequestClient,
   type RestRequestOptions,
 } from "./request";
+import * as botAdminService from "./services/bot-admin-service";
 import * as bootstrapService from "./services/bootstrap-service";
 import * as characterService from "./services/character-service";
+import * as knowledgeBaseService from "./services/knowledge-base-service";
 import * as messageService from "./services/message-service";
+import * as mcpServerService from "./services/mcp-server-service";
 import * as modelService from "./services/model-service";
 import * as sessionService from "./services/session-service";
 import * as workspaceService from "./services/workspace-service";
@@ -63,6 +77,56 @@ export interface WorkspaceChildrenResponse {
 export interface MessageContentToolDetails {
   toolCalls: unknown[];
   toolCallsResponse: unknown[];
+}
+
+export interface BotInstance {
+  id: string;
+  userId: string;
+  platform: string;
+  name: string;
+  enabled: boolean;
+  platformConfig: Record<string, unknown>;
+  reconnectEnabled: boolean;
+  maxRetries: number;
+  retryInterval: number;
+  defaultCharacterId: string;
+  defaultModelId?: string | null;
+  status: string;
+  runtimeStatus?: string;
+  lastStartedAt?: string | null;
+  lastError?: string | null;
+  additionalKwargs?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateBotInstanceRequest {
+  platform: string;
+  name: string;
+  platformConfig: Record<string, unknown>;
+  reconnectConfig?: {
+    enabled?: boolean;
+    maxRetries?: number;
+    retryInterval?: number;
+  };
+  defaultCharacterId: string;
+  defaultModelId?: string;
+  additionalKwargs?: unknown;
+  autoStart?: boolean;
+}
+
+export interface UpdateBotInstanceRequest {
+  name?: string;
+  platformConfig?: Record<string, unknown>;
+  enabled?: boolean;
+  reconnectConfig?: {
+    enabled?: boolean;
+    maxRetries?: number;
+    retryInterval?: number;
+  };
+  defaultCharacterId?: string;
+  defaultModelId?: string;
+  additionalKwargs?: unknown;
 }
 
 export class ApiClient {
@@ -122,16 +186,114 @@ export class ApiClient {
     return bootstrapService.reorderSessionGroups<T>(this.requestClient, groupIds);
   }
 
-  async fetchKnowledgeBases<T = unknown>(): Promise<T> {
-    return bootstrapService.fetchKnowledgeBases<T>(this.requestClient);
+  async fetchKnowledgeBases(
+    params: KnowledgeBaseListParams = {},
+  ): Promise<KnowledgeBaseListResponse> {
+    return knowledgeBaseService.fetchKnowledgeBases(this.requestClient, params);
+  }
+
+  async createKnowledgeBase(data: CreateKnowledgeBaseRequest): Promise<KnowledgeBase> {
+    return knowledgeBaseService.createKnowledgeBase(this.requestClient, data);
+  }
+
+  async updateKnowledgeBase(
+    knowledgeBaseId: string,
+    data: UpdateKnowledgeBaseRequest,
+  ): Promise<KnowledgeBase> {
+    return knowledgeBaseService.updateKnowledgeBase(this.requestClient, knowledgeBaseId, data);
+  }
+
+  async deleteKnowledgeBase<T = { success: boolean }>(knowledgeBaseId: string): Promise<T> {
+    return knowledgeBaseService.deleteKnowledgeBase<T>(this.requestClient, knowledgeBaseId);
+  }
+
+  async fetchKnowledgeBaseFiles(
+    knowledgeBaseId: string,
+    params: KnowledgeBaseFileListParams = {},
+  ): Promise<KnowledgeBaseFileListResponse> {
+    return knowledgeBaseService.fetchKnowledgeBaseFiles(this.requestClient, knowledgeBaseId, params);
+  }
+
+  async uploadKnowledgeBaseFile(
+    knowledgeBaseId: string,
+    file: File,
+    relativePath?: string,
+  ): Promise<KnowledgeBaseFile> {
+    return knowledgeBaseService.uploadKnowledgeBaseFile(
+      this.requestClient,
+      knowledgeBaseId,
+      file,
+      relativePath,
+    );
+  }
+
+  async createKnowledgeBaseFolder(
+    knowledgeBaseId: string,
+    data: CreateKnowledgeBaseFolderRequest,
+  ): Promise<KnowledgeBaseFile> {
+    return knowledgeBaseService.createKnowledgeBaseFolder(this.requestClient, knowledgeBaseId, data);
+  }
+
+  async renameKnowledgeBaseFile(
+    knowledgeBaseId: string,
+    fileId: string,
+    data: RenameKnowledgeBaseFileRequest,
+  ): Promise<KnowledgeBaseFile> {
+    return knowledgeBaseService.renameKnowledgeBaseFile(
+      this.requestClient,
+      knowledgeBaseId,
+      fileId,
+      data,
+    );
+  }
+
+  async deleteKnowledgeBaseFile<T = { success: boolean }>(
+    knowledgeBaseId: string,
+    fileId: string,
+  ): Promise<T> {
+    return knowledgeBaseService.deleteKnowledgeBaseFile<T>(
+      this.requestClient,
+      knowledgeBaseId,
+      fileId,
+    );
+  }
+
+  async retryKnowledgeBaseFile<T = { success: boolean }>(
+    knowledgeBaseId: string,
+    fileId: string,
+  ): Promise<T> {
+    return knowledgeBaseService.retryKnowledgeBaseFile<T>(
+      this.requestClient,
+      knowledgeBaseId,
+      fileId,
+    );
   }
 
   async fetchSkills<T = unknown>(): Promise<T> {
     return bootstrapService.fetchSkills<T>(this.requestClient);
   }
 
+  async triggerSkillScan<T = unknown>(): Promise<T> {
+    return bootstrapService.triggerSkillScan<T>(this.requestClient);
+  }
+
+  async toggleSkill<T = unknown>(skillId: string, enabled: boolean): Promise<T> {
+    return bootstrapService.toggleSkill<T>(this.requestClient, skillId, enabled);
+  }
+
   async fetchAppearanceSettings<T = unknown>(): Promise<T> {
     return bootstrapService.fetchAppearanceSettings<T>(this.requestClient);
+  }
+
+  async fetchGlobalPlugins<T = unknown>(): Promise<T> {
+    return bootstrapService.fetchGlobalPlugins<T>(this.requestClient);
+  }
+
+  async updateGlobalPluginStatus<T = unknown>(
+    pluginId: string,
+    enabled: boolean,
+  ): Promise<T> {
+    return bootstrapService.updateGlobalPluginStatus<T>(this.requestClient, pluginId, enabled);
   }
 
   async fetchCharacters(params: CharacterListParams = {}): Promise<CharacterListResponse> {
@@ -179,6 +341,42 @@ export class ApiClient {
 
   async fetchCharacterTools(characterId: string): Promise<CharacterToolsResponse> {
     return characterService.fetchCharacterTools(this.requestClient, characterId);
+  }
+
+  async fetchMcpServers(): Promise<McpServer[]> {
+    return mcpServerService.fetchMcpServers(this.requestClient);
+  }
+
+  async toggleMcpServer<T = unknown>(serverId: string, enabled: boolean): Promise<T> {
+    return mcpServerService.toggleMcpServer<T>(this.requestClient, serverId, enabled);
+  }
+
+  async refreshMcpServerTools<T = unknown>(serverId: string): Promise<T> {
+    return mcpServerService.refreshMcpServerTools<T>(this.requestClient, serverId);
+  }
+
+  async fetchBotInstances(): Promise<BotInstance[]> {
+    return botAdminService.fetchBotInstances(this.requestClient);
+  }
+
+  async createBotInstance(data: CreateBotInstanceRequest): Promise<BotInstance> {
+    return botAdminService.createBotInstance(this.requestClient, data);
+  }
+
+  async updateBotInstance(botId: string, data: UpdateBotInstanceRequest): Promise<BotInstance> {
+    return botAdminService.updateBotInstance(this.requestClient, botId, data);
+  }
+
+  async startBotInstance(botId: string): Promise<BotInstance> {
+    return botAdminService.startBotInstance(this.requestClient, botId);
+  }
+
+  async stopBotInstance(botId: string): Promise<BotInstance> {
+    return botAdminService.stopBotInstance(this.requestClient, botId);
+  }
+
+  async deleteBotInstance<T = { success: boolean }>(botId: string): Promise<T> {
+    return botAdminService.deleteBotInstance<T>(this.requestClient, botId);
   }
 
   async fetchTeams<T = unknown>(): Promise<T> {
