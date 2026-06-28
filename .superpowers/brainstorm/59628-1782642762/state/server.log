@@ -1,0 +1,4 @@
+{"type":"server-started","port":49937,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:49937","screen_dir":"/Users/joewright/workspace/mosaic-dock/.superpowers/brainstorm/59628-1782642762/content","state_dir":"/Users/joewright/workspace/mosaic-dock/.superpowers/brainstorm/59628-1782642762/state"}
+fs.watch error: EMFILE: too many open files, watch
+{"type":"server-stopped","reason":"owner process exited"}
+{"source":"user-event","type":"click","text":"C. 完整 Guada 框架：加右侧工作目录\n      除聊天区外增加右侧工作目录/文件区，更贴近第二张参考图。信息架构更完整，但涉及新增面板和状态，范围更大。","choice":"c","id":null,"timestamp":1782642822379}

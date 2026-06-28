@@ -22,6 +22,8 @@ const mockClient = vi.hoisted(() => ({
     page: 1,
     pageSize: 20,
   })),
+  fetchWorkspaceTree: vi.fn(async () => ({ tree: [] })),
+  fetchWorkspaceChildren: vi.fn(async () => ({ children: [] })),
   createMessage: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSessionGroups: vi.fn(),

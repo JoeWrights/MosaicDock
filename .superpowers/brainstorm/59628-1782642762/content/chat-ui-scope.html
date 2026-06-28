@@ -1,0 +1,81 @@
+<h2>聊天页参考 Guada：先确认调整范围</h2>
+<p class="subtitle">当前代码里的聊天页已经有基础消息流和输入框；这一步先选“对齐到哪一档”，再进入具体设计。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:flex;height:220px;background:#f7f8fb;border-radius:14px;overflow:hidden;border:1px solid #e5e7eb">
+        <div style="width:76px;background:#fff;border-right:1px solid #edf0f4;padding:12px 8px">
+          <div style="height:8px;background:#d8dde6;border-radius:99px;margin-bottom:12px"></div>
+          <div style="height:8px;background:#edf0f4;border-radius:99px;margin-bottom:8px"></div>
+          <div style="height:8px;background:#edf0f4;border-radius:99px"></div>
+        </div>
+        <div style="flex:1;padding:18px">
+          <div style="height:16px;width:44%;background:#d8dde6;border-radius:99px;margin-bottom:42px"></div>
+          <div style="margin-left:auto;width:42%;height:34px;background:#2563eb;border-radius:14px"></div>
+          <div style="margin-top:18px;width:76%;height:72px;background:#fff;border:1px solid #e5e7eb;border-radius:14px"></div>
+          <div style="margin-top:34px;height:52px;background:#fff;border:1px solid #e5e7eb;border-radius:18px"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 只做轻量视觉对齐</h3>
+      <p>保留现在结构，优化消息间距、气泡宽度、输入框圆角和阴影。改动最小，但和 Guada 的交互差异仍明显。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:flex;height:220px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e5e7eb">
+        <div style="width:76px;background:#fafafa;border-right:1px solid #edf0f4;padding:12px 8px">
+          <div style="height:8px;background:#d8dde6;border-radius:99px;margin-bottom:12px"></div>
+          <div style="height:8px;background:#edf0f4;border-radius:99px;margin-bottom:8px"></div>
+          <div style="height:8px;background:#edf0f4;border-radius:99px"></div>
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;padding:0 22px 18px">
+          <div style="height:42px;border-bottom:1px solid #f0f2f5;display:flex;align-items:center;gap:8px">
+            <div style="width:12px;height:12px;border-radius:4px;background:#9ca3af"></div>
+            <div style="height:10px;width:100px;background:#111827;border-radius:99px"></div>
+          </div>
+          <div style="flex:1;padding-top:30px">
+            <div style="margin-left:auto;width:34%;height:34px;background:#eff6ff;border-radius:14px"></div>
+            <div style="margin-top:18px;display:flex;gap:10px;align-items:flex-start">
+              <div style="width:22px;height:22px;border-radius:50%;background:#111827"></div>
+              <div style="width:68%;height:54px;background:#fff;border:1px solid #edf0f4;border-radius:14px"></div>
+            </div>
+          </div>
+          <div style="height:62px;background:#fff;border:1px solid #edf0f4;border-radius:20px;box-shadow:0 8px 24px rgba(15,23,42,.08)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 推荐：对齐 Guada 的聊天交互</h3>
+      <p>收窄阅读列、标题栏更轻、消息操作区更像 Guada，底部输入框悬浮并支持工具栏/模型位。体验提升明显，改动可控。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:flex;height:220px;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e5e7eb">
+        <div style="width:64px;background:#fafafa;border-right:1px solid #edf0f4"></div>
+        <div style="flex:1;display:flex;flex-direction:column;padding:0 16px 16px">
+          <div style="height:38px;border-bottom:1px solid #f0f2f5"></div>
+          <div style="flex:1;padding-top:24px">
+            <div style="margin-left:auto;width:35%;height:32px;background:#eff6ff;border-radius:14px"></div>
+            <div style="margin-top:18px;width:72%;height:58px;background:#fff;border:1px solid #edf0f4;border-radius:14px"></div>
+          </div>
+          <div style="height:56px;background:#fff;border:1px solid #edf0f4;border-radius:20px;box-shadow:0 8px 24px rgba(15,23,42,.08)"></div>
+        </div>
+        <div style="width:116px;background:#fcfcfd;border-left:1px solid #edf0f4;padding:12px">
+          <div style="height:10px;width:70%;background:#d8dde6;border-radius:99px;margin-bottom:16px"></div>
+          <div style="height:12px;background:#edf0f4;border-radius:4px;margin-bottom:8px"></div>
+          <div style="height:12px;background:#edf0f4;border-radius:4px;width:70%"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. 完整 Guada 框架：加右侧工作目录</h3>
+      <p>除聊天区外增加右侧工作目录/文件区，更贴近第二张参考图。信息架构更完整，但涉及新增面板和状态，范围更大。</p>
+    </div>
+  </div>
+</div>

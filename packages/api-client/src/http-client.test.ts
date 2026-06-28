@@ -148,4 +148,26 @@ describe("ApiClient", () => {
       undefined,
     ]);
   });
+
+  it("fetches workspace tree and children with legacy endpoints", async () => {
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: async () => ({ tree: [] }),
+    })) as unknown as typeof fetch & { mock: { calls: Parameters<typeof fetch>[] } };
+    const client = new ApiClient({
+      fetcher,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+
+    await client.fetchWorkspaceTree("session-1");
+    await client.fetchWorkspaceChildren("session-1", "src/components");
+
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v1/sessions/session-1/workspace/tree",
+      "/api/v1/sessions/session-1/workspace/children?path=src%2Fcomponents",
+    ]);
+  });
 });

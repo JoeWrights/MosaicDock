@@ -4,7 +4,14 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { ChatWorkspace, type ChatWorkspaceApi } from ".";
 
-const baseApi = (): ChatWorkspaceApi => ({
+interface TestChatWorkspaceApi extends ChatWorkspaceApi {
+  client: ChatWorkspaceApi["client"] & {
+    fetchWorkspaceTree: ReturnType<typeof vi.fn>;
+    fetchWorkspaceChildren: ReturnType<typeof vi.fn>;
+  };
+}
+
+const baseApi = (): TestChatWorkspaceApi => ({
   client: {
     fetchSession: vi.fn(async () => ({
       id: "session-1",
@@ -47,6 +54,38 @@ const baseApi = (): ChatWorkspaceApi => ({
       ],
       state: { isStreaming: false },
     })),
+    fetchWorkspaceTree: vi.fn(async () => ({
+      tree: [
+        {
+          name: ".guada",
+          path: ".guada",
+          isDirectory: true,
+          hasChildren: true,
+          children: [],
+        },
+        {
+          name: "src",
+          path: "src",
+          isDirectory: true,
+          hasChildren: true,
+          children: [],
+        },
+        {
+          name: "README.md",
+          path: "README.md",
+          isDirectory: false,
+        },
+      ],
+    })),
+    fetchWorkspaceChildren: vi.fn(async () => ({
+      children: [
+        {
+          name: "index.tsx",
+          path: "src/index.tsx",
+          isDirectory: false,
+        },
+      ],
+    })),
   },
   chatStream: {
     chat: vi.fn(async function* () {
@@ -85,12 +124,35 @@ describe("ChatWorkspace", () => {
     const user = userEvent.setup();
     renderChat(api);
 
-    await user.type(await screen.findByPlaceholderText("输入消息，按 Enter 发送"), "介绍一下项目");
+    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "介绍一下项目");
     await user.keyboard("{Enter}");
 
     await waitFor(() => {
       expect(api.client.createMessage).toHaveBeenCalledWith("session-1", "介绍一下项目");
     });
     expect(await screen.findByText("这是新的 React 前端。")).toBeInTheDocument();
+  });
+
+  it("loads and renders the workspace tree in the right panel", async () => {
+    const api = baseApi();
+    renderChat(api);
+
+    expect(await screen.findByRole("heading", { name: "工作目录" })).toBeInTheDocument();
+    expect(await screen.findByText(".guada")).toBeInTheDocument();
+    expect(await screen.findByText("README.md")).toBeInTheDocument();
+    expect(api.client.fetchWorkspaceTree).toHaveBeenCalledWith("session-1");
+  });
+
+  it("loads workspace children when expanding a directory", async () => {
+    const api = baseApi();
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.click(await screen.findByRole("button", { name: "展开 src" }));
+
+    await waitFor(() => {
+      expect(api.client.fetchWorkspaceChildren).toHaveBeenCalledWith("session-1", "src");
+    });
+    expect(await screen.findByText("index.tsx")).toBeInTheDocument();
   });
 });

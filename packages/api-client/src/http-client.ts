@@ -22,6 +22,22 @@ export interface RequestOptions extends Omit<RequestInit, "body"> {
   body?: unknown;
 }
 
+export interface WorkspaceTreeNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  hasChildren?: boolean;
+  children?: WorkspaceTreeNode[];
+}
+
+export interface WorkspaceTreeResponse {
+  tree: WorkspaceTreeNode[];
+}
+
+export interface WorkspaceChildrenResponse {
+  children: WorkspaceTreeNode[];
+}
+
 export class ApiClient {
   private readonly baseURL: string;
   private readonly fetcher: typeof fetch;
@@ -195,6 +211,20 @@ export class ApiClient {
       query
         ? `/sessions/${sessionId}/messages?${query}`
         : `/sessions/${sessionId}/messages`,
+    );
+  }
+
+  async fetchWorkspaceTree(sessionId: string): Promise<WorkspaceTreeResponse> {
+    return this.request<WorkspaceTreeResponse>(`/sessions/${sessionId}/workspace/tree`);
+  }
+
+  async fetchWorkspaceChildren(
+    sessionId: string,
+    path: string,
+  ): Promise<WorkspaceChildrenResponse> {
+    const search = new URLSearchParams({ path });
+    return this.request<WorkspaceChildrenResponse>(
+      `/sessions/${sessionId}/workspace/children?${search.toString()}`,
     );
   }
 
