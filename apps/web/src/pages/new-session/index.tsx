@@ -321,15 +321,15 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
                     </div>
                   ) : null}
                 </div>
-                <button type="button" aria-label="添加图片" className="hover:text-foreground">
+                <ComposerToolButton label="添加图片">
                   <FileImage className="h-5 w-5" aria-hidden="true" />
-                </button>
-                <button type="button" aria-label="上传附件" className="hover:text-foreground">
+                </ComposerToolButton>
+                <ComposerToolButton label="上传文件">
                   <Paperclip className="h-5 w-5" aria-hidden="true" />
-                </button>
-                <button type="button" aria-label="搜索知识库" className="hover:text-foreground">
+                </ComposerToolButton>
+                <ComposerToolButton label="知识库">
                   <Search className="h-5 w-5" aria-hidden="true" />
-                </button>
+                </ComposerToolButton>
               </div>
               <div className="relative flex items-center gap-3" ref={modelSelectorRef}>
                 <button
@@ -636,6 +636,41 @@ function ModelAvatar({
       title={providerName ?? "模型"}
     >
       <Bot className="h-4 w-4" aria-hidden="true" />
+    </span>
+  );
+}
+
+function ComposerToolButton({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        className="hover:text-foreground"
+        onFocus={() => setVisible(true)}
+        onBlur={() => setVisible(false)}
+        onMouseEnter={() => setVisible(true)}
+        onMouseLeave={() => setVisible(false)}
+      >
+        {children}
+      </button>
+      {visible ? (
+        <span
+          role="tooltip"
+          aria-label={label}
+          className="absolute bottom-7 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded bg-slate-900 px-2 py-1 text-xs text-white shadow"
+        >
+          {label}
+        </span>
+      ) : null}
     </span>
   );
 }

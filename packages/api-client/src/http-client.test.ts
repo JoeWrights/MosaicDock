@@ -170,4 +170,42 @@ describe("ApiClient", () => {
       "/api/v1/sessions/session-1/workspace/children?path=src%2Fcomponents",
     ]);
   });
+
+  it("manages message content and message actions with legacy endpoints", async () => {
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: async () => ({ success: true }),
+    })) as unknown as typeof fetch & { mock: { calls: Parameters<typeof fetch>[] } };
+    const client = new ApiClient({
+      fetcher,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+
+    await client.fetchMessageContentToolDetails("content-1");
+    await client.updateMessageActiveContent("content-2", "message-1");
+    await client.updateMessage("message-2", { content: "更新后的内容" });
+    await client.deleteMessage("message-3");
+
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v1/message-content/content-1/tool-details",
+      "/api/v1/message-content/content-2/active",
+      "/api/v1/messages/message-2",
+      "/api/v1/messages/message-3",
+    ]);
+    expect(fetcher.mock.calls.map(([, init]) => init?.method)).toEqual([
+      undefined,
+      "PUT",
+      "PUT",
+      "DELETE",
+    ]);
+    expect(fetcher.mock.calls.map(([, init]) => init?.body)).toEqual([
+      undefined,
+      JSON.stringify({ message_id: "message-1" }),
+      JSON.stringify({ content: "更新后的内容" }),
+      undefined,
+    ]);
+  });
 });

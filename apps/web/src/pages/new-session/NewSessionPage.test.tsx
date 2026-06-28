@@ -220,6 +220,21 @@ describe("NewSessionPage", () => {
     expect(screen.queryByText("思考强度")).not.toBeInTheDocument();
   });
 
+  it("shows tooltips for composer tool icons on hover", async () => {
+    const api = createApi();
+    const user = userEvent.setup();
+    render(<NewSessionPage api={api} />);
+
+    await user.hover(screen.getByRole("button", { name: "添加图片" }));
+    expect(screen.getByRole("tooltip", { name: "添加图片" })).toBeInTheDocument();
+
+    await user.hover(screen.getByRole("button", { name: "上传文件" }));
+    expect(screen.getByRole("tooltip", { name: "上传文件" })).toBeInTheDocument();
+
+    await user.hover(screen.getByRole("button", { name: "知识库" }));
+    expect(screen.getByRole("tooltip", { name: "知识库" })).toBeInTheDocument();
+  });
+
   it("opens workspace settings, validates absolute paths, and updates the display", async () => {
     const api = createApi();
     const user = userEvent.setup();

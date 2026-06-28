@@ -38,6 +38,11 @@ export interface WorkspaceChildrenResponse {
   children: WorkspaceTreeNode[];
 }
 
+export interface MessageContentToolDetails {
+  toolCalls: unknown[];
+  toolCallsResponse: unknown[];
+}
+
 export class ApiClient {
   private readonly baseURL: string;
   private readonly fetcher: typeof fetch;
@@ -244,6 +249,37 @@ export class ApiClient {
         knowledgeBaseIds,
       },
     });
+  }
+
+  async updateMessage<T = Message>(messageId: string, data: Record<string, unknown>): Promise<T> {
+    return this.request<T>(`/messages/${messageId}`, {
+      method: "PUT",
+      body: data,
+    });
+  }
+
+  async deleteMessage<T = { success: boolean }>(messageId: string): Promise<T> {
+    return this.request<T>(`/messages/${messageId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async updateMessageActiveContent<T = { success: boolean }>(
+    contentId: string,
+    messageId: string,
+  ): Promise<T> {
+    return this.request<T>(`/message-content/${contentId}/active`, {
+      method: "PUT",
+      body: { message_id: messageId },
+    });
+  }
+
+  async fetchMessageContentToolDetails(
+    contentId: string,
+  ): Promise<MessageContentToolDetails> {
+    return this.request<MessageContentToolDetails>(
+      `/message-content/${contentId}/tool-details`,
+    );
   }
 
   getBaseURL(): string {
