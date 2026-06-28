@@ -1,0 +1,33 @@
+{
+  "name": "mosaic-dock",
+  "private": true,
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:web": "pnpm --filter @mosaic-dock/web dev",
+    "dev:api": "pnpm --filter @mosaic-dock/api start:dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  },
+  "pnpm": {
+    "overrides": {
+      "glob": "^11.1.0"
+    },
+    "onlyBuiltDependencies": [
+      "@node-rs/jieba",
+      "@prisma/client",
+      "@prisma/engines",
+      "better-sqlite3",
+      "prisma",
+      "sharp",
+      "sqlite-vec"
+    ]
+  }
+}

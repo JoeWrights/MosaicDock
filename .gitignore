@@ -1,0 +1,9 @@
+node_modules
+dist
+.turbo
+.rsbuild
+coverage
+*.local
+.env
+.env.*
+!.env.example
