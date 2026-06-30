@@ -21,6 +21,7 @@ import { WorkspacePageHeader } from "../../components/layout/WorkspacePageHeader
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { EmptyState } from "../../components/ui/empty-state";
+import { Select } from "../../components/ui/select";
 import { Spinner } from "../../components/ui/spinner";
 import { Switch } from "../../components/ui/switch";
 import { MarkdownContent } from "../../components/chat/MarkdownContent";
@@ -75,8 +76,10 @@ export interface PluginsPageApi {
     | "fetchSkillDocumentation"
     | "installSkill"
     | "installSkillFromUrl"
+    | "installSkillFromRegistry"
     | "uninstallSkill"
     | "fetchMcpServers"
+    | "createMcpServer"
     | "toggleMcpServer"
     | "refreshMcpServerTools"
   >;
@@ -248,6 +251,16 @@ function SkillsPanel({ api }: { api: PluginsPageApi }) {
   const [selectedMarketSkill, setSelectedMarketSkill] = useState<MarketSkillWithStatus | null>(null);
   const [installingFromMarketIds, setInstallingFromMarketIds] = useState<Set<string>>(new Set());
   const [marketInstallError, setMarketInstallError] = useState<string | null>(null);
+  const [skillsShDialogOpen, setSkillsShDialogOpen] = useState(false);
+  const [skillsShIdentifier, setSkillsShIdentifier] = useState("");
+  const [skillsShForce, setSkillsShForce] = useState(false);
+  const [installingFromSkillsSh, setInstallingFromSkillsSh] = useState(false);
+  const [skillsShInstallError, setSkillsShInstallError] = useState<string | null>(null);
+  const [githubDialogOpen, setGithubDialogOpen] = useState(false);
+  const [githubIdentifier, setGithubIdentifier] = useState("");
+  const [githubForce, setGithubForce] = useState(false);
+  const [installingFromGithub, setInstallingFromGithub] = useState(false);
+  const [githubInstallError, setGithubInstallError] = useState<string | null>(null);
   const skillsRef = useRef<SkillItem[]>([]);
   const enabledCount = useMemo(() => skills.filter((skill) => skill.enabled !== false).length, [skills]);
   const market = api.market ?? skillMarketService;
@@ -489,6 +502,88 @@ function SkillsPanel({ api }: { api: PluginsPageApi }) {
     }
   }
 
+  function openSkillsShDialog() {
+    setSkillsShDialogOpen(true);
+    setSkillsShIdentifier("");
+    setSkillsShForce(false);
+    setSkillsShInstallError(null);
+  }
+
+  function closeSkillsShDialog() {
+    if (installingFromSkillsSh) return;
+    setSkillsShDialogOpen(false);
+    setSkillsShIdentifier("");
+    setSkillsShForce(false);
+    setSkillsShInstallError(null);
+  }
+
+  async function installFromSkillsSh() {
+    const identifier = skillsShIdentifier.trim();
+    if (!identifier) {
+      setSkillsShInstallError("请输入 Skills.sh 标识");
+      return;
+    }
+    setInstallingFromSkillsSh(true);
+    setSkillsShInstallError(null);
+    try {
+      const response = await api.client.installSkillFromRegistry({
+        source: "skills-sh",
+        identifier,
+        force: skillsShForce,
+      });
+      setSkillsShDialogOpen(false);
+      setSkillsShIdentifier("");
+      setSkillsShForce(false);
+      await loadSkills();
+      showToast(getStringValue((response as { message?: unknown }).message) ?? "安装成功");
+    } catch (installError) {
+      setSkillsShInstallError(installError instanceof Error ? installError.message : "安装失败");
+    } finally {
+      setInstallingFromSkillsSh(false);
+    }
+  }
+
+  function openGithubDialog() {
+    setGithubDialogOpen(true);
+    setGithubIdentifier("");
+    setGithubForce(false);
+    setGithubInstallError(null);
+  }
+
+  function closeGithubDialog() {
+    if (installingFromGithub) return;
+    setGithubDialogOpen(false);
+    setGithubIdentifier("");
+    setGithubForce(false);
+    setGithubInstallError(null);
+  }
+
+  async function installFromGithub() {
+    const identifier = githubIdentifier.trim();
+    if (!identifier) {
+      setGithubInstallError("请输入 GitHub 仓库或路径");
+      return;
+    }
+    setInstallingFromGithub(true);
+    setGithubInstallError(null);
+    try {
+      const response = await api.client.installSkillFromRegistry({
+        source: "github",
+        identifier,
+        force: githubForce,
+      });
+      setGithubDialogOpen(false);
+      setGithubIdentifier("");
+      setGithubForce(false);
+      await loadSkills();
+      showToast(getStringValue((response as { message?: unknown }).message) ?? "安装成功");
+    } catch (installError) {
+      setGithubInstallError(installError instanceof Error ? installError.message : "安装失败");
+    } finally {
+      setInstallingFromGithub(false);
+    }
+  }
+
   return (
     <>
       {toastMessage ? (
@@ -508,7 +603,13 @@ function SkillsPanel({ api }: { api: PluginsPageApi }) {
         emptyTitle="暂无 Skills"
         empty={skills.length === 0}
         action={
-          <SkillActions scanning={scanning} onInstall={openInstallDialog} onScan={() => void scanSkills()} />
+          <SkillActions
+            scanning={scanning}
+            onInstall={openInstallDialog}
+            onInstallFromSkillsSh={openSkillsShDialog}
+            onInstallFromGithub={openGithubDialog}
+            onScan={() => void scanSkills()}
+          />
         }
       >
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -615,6 +716,30 @@ function SkillsPanel({ api }: { api: PluginsPageApi }) {
           onInstall={() => void installSelectedMarketSkill()}
           onOpenGit={() => openExternalUrl(getMarketInstallUrl(selectedMarketSkill, "git"))}
           onOpenDetail={() => openExternalUrl(selectedMarketSkill.detailUrl)}
+        />
+      ) : null}
+      {skillsShDialogOpen ? (
+        <SkillsShInstallDialog
+          identifier={skillsShIdentifier}
+          force={skillsShForce}
+          installing={installingFromSkillsSh}
+          error={skillsShInstallError}
+          onIdentifierChange={setSkillsShIdentifier}
+          onForceChange={setSkillsShForce}
+          onCancel={closeSkillsShDialog}
+          onInstall={() => void installFromSkillsSh()}
+        />
+      ) : null}
+      {githubDialogOpen ? (
+        <GithubInstallDialog
+          identifier={githubIdentifier}
+          force={githubForce}
+          installing={installingFromGithub}
+          error={githubInstallError}
+          onIdentifierChange={setGithubIdentifier}
+          onForceChange={setGithubForce}
+          onCancel={closeGithubDialog}
+          onInstall={() => void installFromGithub()}
         />
       ) : null}
     </>
@@ -854,6 +979,178 @@ function MarketSkillInstallDialog({
   );
 }
 
+function SkillsShInstallDialog({
+  identifier,
+  force,
+  installing,
+  error,
+  onIdentifierChange,
+  onForceChange,
+  onCancel,
+  onInstall,
+}: {
+  identifier: string;
+  force: boolean;
+  installing: boolean;
+  error: string | null;
+  onIdentifierChange: (value: string) => void;
+  onForceChange: (checked: boolean) => void;
+  onCancel: () => void;
+  onInstall: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 py-6">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skills-sh-install-title"
+        className="w-[500px] max-w-[90vw] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-[#2e3035] dark:bg-[#202126]"
+      >
+        <header className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-[#2e3035]">
+          <h2 id="skills-sh-install-title" className="text-sm font-semibold">
+            从 Skills.sh 安装
+          </h2>
+          <button
+            type="button"
+            aria-label="关闭 Skills.sh 安装弹窗"
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+            disabled={installing}
+            onClick={onCancel}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </header>
+        <div className="space-y-4 px-5 py-4">
+          <p className="text-sm text-muted-foreground">
+            输入 skills.sh 的 GitHub 标识，例如 <code>anthropics/skills/skill-creator</code>。
+          </p>
+          <label className="block space-y-2 text-sm">
+            <span>Skills.sh 标识</span>
+            <input
+              className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+              value={identifier}
+              disabled={installing}
+              placeholder="owner/repo 或 owner/repo/path/to/skill"
+              onChange={(event) => onIdentifierChange(event.currentTarget.value)}
+            />
+          </label>
+          <div>
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 accent-pink-500"
+                checked={force}
+                disabled={installing}
+                onChange={(event) => onForceChange(event.currentTarget.checked)}
+              />
+              强制覆盖（如果技能已存在则替换）
+            </label>
+            <div className="ml-6 mt-1 text-xs text-muted-foreground">
+              将从 GitHub archive 下载并安装，服务端不会执行外部 CLI 命令。
+            </div>
+          </div>
+          {error ? <div className="text-sm text-red-500">{error}</div> : null}
+        </div>
+        <footer className="flex justify-end gap-2 border-t border-slate-100 px-4 py-3 dark:border-[#2e3035]">
+          <Button variant="secondary" size="sm" disabled={installing} onClick={onCancel}>
+            取消
+          </Button>
+          <Button size="sm" disabled={!identifier.trim() || installing} onClick={onInstall}>
+            {installing ? <Spinner /> : null}
+            安装
+          </Button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function GithubInstallDialog({
+  identifier,
+  force,
+  installing,
+  error,
+  onIdentifierChange,
+  onForceChange,
+  onCancel,
+  onInstall,
+}: {
+  identifier: string;
+  force: boolean;
+  installing: boolean;
+  error: string | null;
+  onIdentifierChange: (value: string) => void;
+  onForceChange: (checked: boolean) => void;
+  onCancel: () => void;
+  onInstall: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 py-6">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="github-install-title"
+        className="w-[500px] max-w-[90vw] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-[#2e3035] dark:bg-[#202126]"
+      >
+        <header className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-[#2e3035]">
+          <h2 id="github-install-title" className="text-sm font-semibold">
+            从 GitHub 安装
+          </h2>
+          <button
+            type="button"
+            aria-label="关闭 GitHub 安装弹窗"
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+            disabled={installing}
+            onClick={onCancel}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </header>
+        <div className="space-y-4 px-5 py-4">
+          <p className="text-sm text-muted-foreground">
+            输入 GitHub 仓库或子目录，例如 <code>https://github.com/acme/skills/tree/main/frontend-design</code>。
+          </p>
+          <label className="block space-y-2 text-sm">
+            <span>GitHub 仓库或路径</span>
+            <input
+              className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+              value={identifier}
+              disabled={installing}
+              placeholder="owner/repo 或 GitHub URL"
+              onChange={(event) => onIdentifierChange(event.currentTarget.value)}
+            />
+          </label>
+          <div>
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 accent-pink-500"
+                checked={force}
+                disabled={installing}
+                onChange={(event) => onForceChange(event.currentTarget.checked)}
+              />
+              强制覆盖（如果技能已存在则替换）
+            </label>
+            <div className="ml-6 mt-1 text-xs text-muted-foreground">
+              将从 GitHub archive 下载并安装，服务端不会执行外部 CLI 命令。
+            </div>
+          </div>
+          {error ? <div className="text-sm text-red-500">{error}</div> : null}
+        </div>
+        <footer className="flex justify-end gap-2 border-t border-slate-100 px-4 py-3 dark:border-[#2e3035]">
+          <Button variant="secondary" size="sm" disabled={installing} onClick={onCancel}>
+            取消
+          </Button>
+          <Button size="sm" disabled={!identifier.trim() || installing} onClick={onInstall}>
+            {installing ? <Spinner /> : null}
+            安装
+          </Button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 function SkillInstallDialog({
   file,
   forceOverwrite,
@@ -1048,6 +1345,15 @@ function McpServersPanel({ api }: { api: PluginsPageApi }) {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [serverForm, setServerForm] = useState<McpServerFormState>(createEmptyMcpServerForm());
+  const [savingServer, setSavingServer] = useState(false);
+  const [serverFormError, setServerFormError] = useState<string | null>(null);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [importJsonText, setImportJsonText] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const enabledCount = useMemo(() => servers.filter((server) => server.enabled === true).length, [servers]);
 
   async function loadServers() {
@@ -1091,48 +1397,602 @@ function McpServersPanel({ api }: { api: PluginsPageApi }) {
     }
   }
 
-  return (
-    <PluginSection
-      title="MCP 服务器"
-      description="通过 Model Context Protocol 连接外部工具和服务。"
-      meta={`${enabledCount}/${servers.length} 已启用`}
-      loading={loading}
-      error={error}
-      emptyTitle="暂无 MCP 服务器"
-      empty={servers.length === 0}
-      action={
-        <div className="flex gap-2">
-          <Button variant="secondary" size="sm">
-            <Upload className="h-4 w-4" aria-hidden="true" />
-            导入配置
-          </Button>
-          <Button size="sm">
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            添加服务器
-          </Button>
-        </div>
+  function openImportDialog() {
+    setImportJsonText("");
+    setImportError(null);
+    setImportDialogOpen(true);
+  }
+
+  function closeImportDialog() {
+    if (importing) return;
+    setImportDialogOpen(false);
+    setImportJsonText("");
+    setImportError(null);
+  }
+
+  async function importMcpServers() {
+    setImporting(true);
+    setImportError(null);
+    setNotice(null);
+    try {
+      const serversToImport = parseMcpImportConfig(importJsonText);
+      let successCount = 0;
+      const errors: string[] = [];
+
+      for (const server of serversToImport) {
+        try {
+          await api.client.createMcpServer(server);
+          successCount += 1;
+        } catch (createError) {
+          errors.push(`"${String(server.name || "unknown")}": ${createError instanceof Error ? createError.message : "导入失败"}`);
+        }
       }
-    >
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {servers.map((server) => (
-          <PluginCard
-            key={server.id}
-            title={server.name}
-            description={server.description || "MCP 服务器"}
-            enabled={server.enabled === true}
-            badge={typeof server.status === "string" ? server.status : "未配置状态"}
-            onEnabledChange={(enabled) => void toggleServer(server.id, enabled)}
-            footer={
-              <Button variant="ghost" size="sm" onClick={() => void refreshServer(server.id)}>
-                <RotateCw className="h-4 w-4" aria-hidden="true" />
-                刷新工具
-              </Button>
-            }
-          />
-        ))}
-      </div>
-    </PluginSection>
+
+      if (successCount > 0) {
+        setNotice(`成功导入 ${successCount} 个服务器`);
+        await loadServers();
+        setImportDialogOpen(false);
+        setImportJsonText("");
+      }
+      if (errors.length > 0) {
+        setImportError(`导入失败：${errors.length} 个\n${errors.join("\n")}`);
+      }
+      if (successCount === 0 && errors.length === 0) {
+        setImportError("未找到可导入的服务器配置");
+      }
+    } catch (importConfigError) {
+      setImportError(importConfigError instanceof SyntaxError
+        ? "JSON 格式错误，请检查输入"
+        : importConfigError instanceof Error
+          ? importConfigError.message
+          : "导入失败");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function openAddDialog() {
+    setServerForm(createEmptyMcpServerForm());
+    setServerFormError(null);
+    setAddDialogOpen(true);
+  }
+
+  function closeAddDialog() {
+    if (savingServer) return;
+    setAddDialogOpen(false);
+    setServerForm(createEmptyMcpServerForm());
+    setServerFormError(null);
+  }
+
+  function updateServerForm(patch: Partial<McpServerFormState>) {
+    setServerForm((current) => ({ ...current, ...patch }));
+    setServerFormError(null);
+  }
+
+  async function saveMcpServer() {
+    setSavingServer(true);
+    setServerFormError(null);
+    setNotice(null);
+    try {
+      const submitData = buildMcpServerSubmitData(serverForm);
+      await api.client.createMcpServer(submitData);
+      setNotice("添加成功");
+      setAddDialogOpen(false);
+      setServerForm(createEmptyMcpServerForm());
+      await loadServers();
+    } catch (saveError) {
+      setServerFormError(saveError instanceof Error ? saveError.message : "保存失败");
+    } finally {
+      setSavingServer(false);
+    }
+  }
+
+  return (
+    <>
+      {notice ? (
+        <div
+          role="status"
+          className="fixed left-1/2 top-4 z-50 -translate-x-1/2 rounded-md bg-green-50 px-4 py-2 text-sm text-green-700 shadow-sm dark:bg-green-500/10 dark:text-green-300"
+        >
+          {notice}
+        </div>
+      ) : null}
+      <PluginSection
+        title="MCP 服务器"
+        description="通过 Model Context Protocol 连接外部工具和服务。"
+        meta={`${enabledCount}/${servers.length} 已启用`}
+        loading={loading}
+        error={error}
+        emptyTitle="暂无 MCP 服务器"
+        empty={servers.length === 0}
+        action={
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={openImportDialog}>
+              <Upload className="h-4 w-4" aria-hidden="true" />
+              导入配置
+            </Button>
+            <Button size="sm" onClick={openAddDialog}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              添加服务器
+            </Button>
+          </div>
+        }
+      >
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {servers.map((server) => (
+            <PluginCard
+              key={server.id}
+              title={server.name}
+              description={server.description || "MCP 服务器"}
+              enabled={server.enabled === true}
+              badge={typeof server.status === "string" ? server.status : "未配置状态"}
+              onEnabledChange={(enabled) => void toggleServer(server.id, enabled)}
+              footer={
+                <Button variant="ghost" size="sm" onClick={() => void refreshServer(server.id)}>
+                  <RotateCw className="h-4 w-4" aria-hidden="true" />
+                  刷新工具
+                </Button>
+              }
+            />
+          ))}
+        </div>
+      </PluginSection>
+      {importDialogOpen ? (
+        <McpImportDialog
+          jsonText={importJsonText}
+          importing={importing}
+          error={importError}
+          onJsonTextChange={setImportJsonText}
+          onCancel={closeImportDialog}
+          onImport={() => void importMcpServers()}
+        />
+      ) : null}
+      {addDialogOpen ? (
+        <McpServerDialog
+          form={serverForm}
+          saving={savingServer}
+          error={serverFormError}
+          onChange={updateServerForm}
+          onCancel={closeAddDialog}
+          onSave={() => void saveMcpServer()}
+        />
+      ) : null}
+    </>
   );
+}
+
+function McpImportDialog({
+  jsonText,
+  importing,
+  error,
+  onJsonTextChange,
+  onCancel,
+  onImport,
+}: {
+  jsonText: string;
+  importing: boolean;
+  error: string | null;
+  onJsonTextChange: (value: string) => void;
+  onCancel: () => void;
+  onImport: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 py-6">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mcp-import-title"
+        className="flex w-[640px] max-w-[90vw] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-[#2e3035] dark:bg-[#202126]"
+      >
+        <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-[#2e3035]">
+          <h2 id="mcp-import-title" className="text-sm font-semibold">
+            导入 MCP 服务器配置
+          </h2>
+          <button
+            type="button"
+            aria-label="关闭导入配置弹窗"
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+            disabled={importing}
+            onClick={onCancel}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </header>
+        <div className="max-h-[60vh] space-y-4 overflow-y-auto px-6 py-4">
+          <div>
+            <div className="mb-2 text-sm text-muted-foreground">
+              请粘贴 MCP 服务器配置 JSON 数据，支持以下格式：
+            </div>
+            <ul className="list-inside list-disc space-y-1 text-xs text-muted-foreground">
+              <li>
+                标准格式：
+                <code className="rounded bg-slate-100 px-1 dark:bg-[#2a2c30]">{"{\"mcpServers\": {...}}"}</code>
+              </li>
+              <li>
+                单个服务器对象格式：
+                <code className="rounded bg-slate-100 px-1 dark:bg-[#2a2c30]">{"{\"name\": \"...\", \"baseUrl\": \"...\"}"}</code>
+              </li>
+            </ul>
+          </div>
+          <textarea
+            className="min-h-[260px] w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+            value={jsonText}
+            disabled={importing}
+            placeholder={`请粘贴 JSON 配置，例如：
+{
+  "mcpServers": {
+    "WebSearch": {
+      "type": "streamableHttp",
+      "description": "描述信息",
+      "isActive": true,
+      "name": "阿里云百炼_联网搜索",
+      "baseUrl": "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp",
+      "headers": {
+        "Authorization": "Bearer sk-xxx"
+      }
+    }
+  }
+}`}
+            onChange={(event) => onJsonTextChange(event.currentTarget.value)}
+          />
+          {error ? <div className="whitespace-pre-line text-sm text-red-500">{error}</div> : null}
+        </div>
+        <footer className="flex justify-end gap-2 border-t border-slate-100 px-4 py-3 dark:border-[#2e3035]">
+          <Button variant="secondary" size="sm" disabled={importing} onClick={onCancel}>
+            取消
+          </Button>
+          <Button size="sm" disabled={importing} className="bg-pink-500 text-white hover:bg-pink-600" onClick={onImport}>
+            {importing ? <Spinner /> : null}
+            导入
+          </Button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+type McpServerProtocol = "stdio" | "sse" | "streamableHttp";
+
+const mcpProtocolOptions = [
+  { value: "stdio", label: "标准输入 / 输出 (stdio)" },
+  { value: "sse", label: "服务器发送事件 (sse)" },
+  { value: "streamableHttp", label: "可流式传输的 HTTP (streamableHttp)" },
+];
+
+interface McpServerFormState {
+  name: string;
+  url: string;
+  type: McpServerProtocol;
+  description: string;
+  headers: string;
+  command: string;
+  args: string;
+  env: string;
+  cwd: string;
+  enabled: boolean;
+}
+
+function McpServerDialog({
+  form,
+  saving,
+  error,
+  onChange,
+  onCancel,
+  onSave,
+}: {
+  form: McpServerFormState;
+  saving: boolean;
+  error: string | null;
+  onChange: (patch: Partial<McpServerFormState>) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const isStdio = form.type === "stdio";
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/20 px-4 py-6">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mcp-server-dialog-title"
+        className="flex w-[560px] max-w-[90vw] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-[#2e3035] dark:bg-[#202126]"
+      >
+        <header className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-[#2e3035]">
+          <h2 id="mcp-server-dialog-title" className="text-sm font-semibold">
+            添加 MCP 服务器
+          </h2>
+          <button
+            type="button"
+            aria-label="关闭添加 MCP 服务器弹窗"
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+            disabled={saving}
+            onClick={onCancel}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </header>
+        <div className="max-h-[60vh] space-y-4 overflow-y-auto px-6 py-4">
+          <McpFormRow label="服务器名称" required>
+            <input
+              aria-label="服务器名称"
+              className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+              value={form.name}
+              disabled={saving}
+              placeholder="请输入服务器名称"
+              onChange={(event) => onChange({ name: event.currentTarget.value })}
+            />
+          </McpFormRow>
+
+          {!isStdio ? (
+            <>
+              <McpFormRow label="服务地址" required>
+                <input
+                  aria-label="服务地址"
+                  className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+                  value={form.url}
+                  disabled={saving}
+                  placeholder="https://example.com/mcp"
+                  onChange={(event) => onChange({ url: event.currentTarget.value })}
+                />
+              </McpFormRow>
+              <McpFormRow label="HTTP 请求头">
+                <textarea
+                  aria-label="HTTP 请求头"
+                  className="min-h-[112px] w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+                  value={form.headers}
+                  disabled={saving}
+                  placeholder={"请输入自定义 HTTP 请求头，一行一个，格式：Header-Name: value\n例如：\nAuthorization: Bearer your_token\nX-API-Key: your_api_key"}
+                  onChange={(event) => onChange({ headers: event.currentTarget.value })}
+                />
+                <div className="mt-1 text-xs text-muted-foreground">
+                  每行一个请求头，格式为 &quot;Header-Name: value&quot;
+                </div>
+              </McpFormRow>
+            </>
+          ) : (
+            <>
+              <McpFormRow label="命令" required>
+                <input
+                  aria-label="命令"
+                  className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+                  value={form.command}
+                  disabled={saving}
+                  placeholder="例如: npx, python, node"
+                  onChange={(event) => onChange({ command: event.currentTarget.value })}
+                />
+                <div className="mt-1 text-xs text-muted-foreground">要执行的命令或可执行文件</div>
+              </McpFormRow>
+              <McpFormRow label="参数">
+                <textarea
+                  aria-label="参数"
+                  className="min-h-[80px] w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+                  value={form.args}
+                  disabled={saving}
+                  placeholder={"每行一个参数，例如:\n-m\nmcp_server\n--port\n3000"}
+                  onChange={(event) => onChange({ args: event.currentTarget.value })}
+                />
+                <div className="mt-1 text-xs text-muted-foreground">每行一个参数</div>
+              </McpFormRow>
+              <McpFormRow label="环境变量">
+                <textarea
+                  aria-label="环境变量"
+                  className="min-h-[112px] w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+                  value={form.env}
+                  disabled={saving}
+                  placeholder={"请输入环境变量，一行一个，格式：KEY=value\n例如:\nAPI_KEY=your_api_key\nNODE_ENV=production"}
+                  onChange={(event) => onChange({ env: event.currentTarget.value })}
+                />
+                <div className="mt-1 text-xs text-muted-foreground">每行一个环境变量，格式为 &quot;KEY=value&quot;</div>
+              </McpFormRow>
+              <McpFormRow label="工作目录">
+                <input
+                  aria-label="工作目录"
+                  className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+                  value={form.cwd}
+                  disabled={saving}
+                  placeholder="可选，例如: /path/to/working/dir"
+                  onChange={(event) => onChange({ cwd: event.currentTarget.value })}
+                />
+              </McpFormRow>
+            </>
+          )}
+
+          <McpFormRow label="协议类型" required>
+            <Select
+              value={form.type}
+              disabled={saving}
+              ariaLabel="协议类型"
+              options={mcpProtocolOptions}
+              onValueChange={(value) => onChange({ type: value as McpServerProtocol })}
+            />
+          </McpFormRow>
+
+          <McpFormRow label="描述信息">
+            <textarea
+              aria-label="描述信息"
+              className="min-h-[80px] w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-500/20 dark:border-[#34363c] dark:bg-[#1e1f23]"
+              value={form.description}
+              disabled={saving}
+              placeholder="可选，描述此服务器的用途"
+              onChange={(event) => onChange({ description: event.currentTarget.value })}
+            />
+          </McpFormRow>
+
+          <div className="grid grid-cols-[96px_1fr] items-center gap-4">
+            <span className="text-sm text-muted-foreground">启用状态</span>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={form.enabled}
+                disabled={saving}
+                ariaLabel="启用状态"
+                onCheckedChange={(enabled) => onChange({ enabled })}
+              />
+              <span className="text-xs text-muted-foreground">{form.enabled ? "启动" : "禁用"}</span>
+            </div>
+          </div>
+
+          {error ? <div className="whitespace-pre-line text-sm text-red-500">{error}</div> : null}
+        </div>
+        <footer className="flex justify-end gap-2 border-t border-slate-100 px-4 py-3 dark:border-[#2e3035]">
+          <Button variant="secondary" size="sm" disabled={saving} onClick={onCancel}>
+            取消
+          </Button>
+          <Button size="sm" disabled={saving} className="bg-pink-500 text-white hover:bg-pink-600" onClick={onSave}>
+            {saving ? <Spinner /> : null}
+            确定
+          </Button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function McpFormRow({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[96px_1fr] items-start gap-4">
+      <span className="pt-2 text-sm text-muted-foreground">
+        {required ? <span className="text-pink-500">* </span> : null}
+        {label}
+      </span>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function createEmptyMcpServerForm(): McpServerFormState {
+  return {
+    name: "",
+    url: "",
+    type: "streamableHttp",
+    description: "",
+    headers: "",
+    command: "",
+    args: "",
+    env: "",
+    cwd: "",
+    enabled: true,
+  };
+}
+
+function buildMcpServerSubmitData(form: McpServerFormState): Record<string, unknown> {
+  const name = form.name.trim();
+  if (!name) throw new Error("请输入服务器名称");
+
+  if (form.type === "stdio") {
+    const command = form.command.trim();
+    if (!command) throw new Error("请输入命令");
+    return {
+      name,
+      url: null,
+      type: form.type,
+      description: form.description.trim(),
+      headers: null,
+      command,
+      args: parseLines(form.args),
+      env: parseEnvLines(form.env),
+      cwd: form.cwd.trim() || null,
+      enabled: form.enabled,
+    };
+  }
+
+  const url = form.url.trim();
+  if (!url) throw new Error("请输入服务地址");
+  return {
+    name,
+    url,
+    type: form.type,
+    description: form.description.trim(),
+    headers: parseHeaderLines(form.headers),
+    command: null,
+    args: null,
+    env: null,
+    cwd: null,
+    enabled: form.enabled,
+  };
+}
+
+function parseHeaderLines(text: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) continue;
+    const colonIndex = trimmedLine.indexOf(":");
+    if (colonIndex === -1) continue;
+    const key = trimmedLine.slice(0, colonIndex).trim();
+    const value = trimmedLine.slice(colonIndex + 1).trim();
+    if (key && value) headers[key] = value;
+  }
+  return headers;
+}
+
+function parseEnvLines(text: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const trimmedLine = line.trim();
+    if (!trimmedLine) continue;
+    const equalIndex = trimmedLine.indexOf("=");
+    if (equalIndex === -1) continue;
+    const key = trimmedLine.slice(0, equalIndex).trim();
+    const value = trimmedLine.slice(equalIndex + 1).trim();
+    if (key) env[key] = value;
+  }
+  return env;
+}
+
+function parseLines(text: string): string[] {
+  return text.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+function parseMcpImportConfig(jsonText: string): Array<Record<string, unknown>> {
+  const jsonData = JSON.parse(jsonText) as unknown;
+  if (!isPlainObject(jsonData)) {
+    throw new Error("无效的 JSON 格式");
+  }
+
+  let serversToImport: Array<Record<string, unknown>>;
+  const mcpServers = jsonData.mcpServers;
+  if (isPlainObject(mcpServers)) {
+    serversToImport = Object.entries(mcpServers)
+      .filter(([, server]) => isPlainObject(server))
+      .map(([key, server]) => ({ key, ...(server as Record<string, unknown>) }));
+  } else if (typeof jsonData.name === "string" && typeof jsonData.baseUrl === "string") {
+    serversToImport = [jsonData];
+  } else {
+    throw new Error("无法识别的 JSON 格式，请确保包含 mcpServers 字段或有效的服务器对象");
+  }
+
+  if (serversToImport.length === 0) {
+    throw new Error("未找到可导入的服务器配置");
+  }
+
+  return serversToImport.map((serverData) => {
+    const name = getStringValue(serverData.name) ?? getStringValue(serverData.key) ?? "未命名服务器";
+    const url = getStringValue(serverData.baseUrl) ?? getStringValue(serverData.url) ?? "";
+    if (!name || !url) {
+      throw new Error("缺少必填字段：name 或 url");
+    }
+
+    return {
+      name,
+      url,
+      description: getStringValue(serverData.description) ?? `导入自配置文件：${getStringValue(serverData.key) ?? "unknown"}`,
+      headers: isPlainObject(serverData.headers) ? serverData.headers : {},
+      enabled: typeof serverData.isActive === "boolean" ? serverData.isActive : true,
+      type: getStringValue(serverData.type) ?? undefined,
+    };
+  });
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 interface PluginSectionProps {
@@ -1252,15 +2112,21 @@ function PluginCard({
 function SkillActions({
   scanning,
   onInstall,
+  onInstallFromSkillsSh,
+  onInstallFromGithub,
   onScan,
 }: {
   scanning: boolean;
   onInstall: () => void;
+  onInstallFromSkillsSh: () => void;
+  onInstallFromGithub: () => void;
   onScan: () => void;
 }) {
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-wrap gap-2">
       <Button variant="secondary" size="sm" onClick={onInstall}>安装</Button>
+      <Button variant="secondary" size="sm" onClick={onInstallFromSkillsSh}>从 Skills.sh 安装</Button>
+      <Button variant="secondary" size="sm" onClick={onInstallFromGithub}>从 GitHub 安装</Button>
       <Button variant="secondary" size="sm" disabled={scanning} onClick={onScan}>
         <RefreshCw className={cn("h-4 w-4", scanning ? "animate-spin" : "")} aria-hidden="true" />
         扫描

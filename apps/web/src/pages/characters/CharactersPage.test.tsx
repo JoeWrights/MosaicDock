@@ -92,6 +92,39 @@ function createApi(): CharactersPageApi {
         createdAt: "2026-06-28T00:00:00.000Z",
         updatedAt: "2026-06-28T00:00:00.000Z",
       })),
+      fetchTeams: vi.fn(async () => ({
+        items: [
+          {
+            id: "team-1",
+            name: "内容策划",
+            description: "协同完成内容策划工作",
+            leaderCharacterId: "character-1",
+            members: [
+              {
+                id: "member-1",
+                characterId: "character-1",
+                role: "leader" as const,
+                character: { id: "character-1", title: "智能助手", description: "一个友好、专业的 AI 助手" },
+              },
+              {
+                id: "member-2",
+                characterId: "character-2",
+                role: "member" as const,
+                character: { id: "character-2", title: "产品经理", description: "帮助拆解需求和产品方案" },
+              },
+            ],
+          },
+        ],
+      })),
+      createTeam: vi.fn(async (data) => ({
+        id: "team-new",
+        name: data.name,
+        description: data.description,
+        leaderCharacterId: data.leaderCharacterId,
+        members: [],
+      })),
+      updateTeam: vi.fn(async (teamId, data) => ({ id: teamId, ...data })),
+      deleteTeam: vi.fn(async () => ({ success: true })) as unknown as CharactersPageApi["client"]["deleteTeam"],
       fetchModels: vi.fn(async () => ({
         items: [
           {
@@ -119,7 +152,12 @@ function createApi(): CharactersPageApi {
             {
               id: "skill-1",
               name: "需求分析",
-              description: "分析需求",
+              manifest: {
+                name: "需求分析",
+                description: "帮助梳理用户故事、边界条件和验收标准",
+                version: "1.2.0",
+              },
+              source: "system",
               enabled: true,
             },
           ],
@@ -181,7 +219,7 @@ function createApi(): CharactersPageApi {
       createSession: vi.fn(async (data) => ({
         id: "session-new",
         title: data.title ?? "智能助手",
-        characterId: data.characterId,
+        characterId: data.characterId ?? "",
         modelId: data.modelId ?? "model-1",
         userId: "user-1",
         settings: {},
@@ -324,6 +362,81 @@ describe("CharactersPage", () => {
     expect(screen.getByRole("button", { name: "运营" })).toBeInTheDocument();
   });
 
+  it("renders Guada-style team cards on the teams tab", async () => {
+    renderCharactersPage(createApi(), "/characters/teams");
+
+    expect(await screen.findByText("内容策划")).toBeInTheDocument();
+    expect(screen.getByText("协同完成内容策划工作")).toBeInTheDocument();
+    expect(screen.getByText("1 位主理人 · 1 位成员")).toBeInTheDocument();
+    expect(screen.getByText("智能助手")).toBeInTheDocument();
+    expect(screen.getByText("产品经理")).toBeInTheDocument();
+    expect(screen.getByText("主理")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建团队" })).toBeInTheDocument();
+    expect(screen.getByText("将多个角色组合成协作团队")).toBeInTheDocument();
+  });
+
+  it("creates a team with a leader and members", async () => {
+    const api = createApi();
+    const user = userEvent.setup();
+    renderCharactersPage(api, "/characters/teams");
+
+    expect(await screen.findByText("内容策划")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "新建团队" }));
+
+    const dialog = screen.getByRole("dialog", { name: "新建团队" });
+    await user.type(within(dialog).getByLabelText("团队名称"), "视频制作");
+    await user.type(within(dialog).getByLabelText("团队描述"), "协同完成视频脚本和剪辑");
+    await user.click(within(dialog).getByText("选择主理人角色"));
+
+    const leaderDialog = screen.getByRole("dialog", { name: "选择主理人" });
+    await user.click(within(leaderDialog).getByText("智能助手"));
+
+    await user.click(within(dialog).getByRole("button", { name: "添加成员" }));
+    const memberDialog = screen.getByRole("dialog", { name: "添加团队成员" });
+    await user.click(within(memberDialog).getByText("产品经理"));
+    await user.click(within(memberDialog).getByRole("button", { name: "完成" }));
+    await user.click(within(dialog).getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(api.client.createTeam).toHaveBeenCalledWith({
+        name: "视频制作",
+        description: "协同完成视频脚本和剪辑",
+        leaderCharacterId: "character-1",
+        memberCharacterIds: ["character-2"],
+      });
+    });
+    expect(api.client.fetchTeams).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts a team chat and notifies the workspace sidebar about the new session", async () => {
+    const api = createApi();
+    const user = userEvent.setup();
+    const sessionCreatedListener = vi.fn();
+    window.addEventListener("mosaic-session-created", sessionCreatedListener);
+    renderCharactersPage(api, "/characters/teams");
+
+    const teamCard = await screen.findByText("内容策划");
+    const card = teamCard.closest("article");
+    expect(card).not.toBeNull();
+    await user.click(within(card as HTMLElement).getByRole("button", { name: "开始协作" }));
+
+    await waitFor(() => {
+      expect(api.client.createSession).toHaveBeenCalledWith({
+        teamId: "team-1",
+        title: "内容策划",
+      });
+    });
+    expect(sessionCreatedListener).toHaveBeenCalledTimes(1);
+    expect(sessionCreatedListener.mock.calls[0]?.[0]).toMatchObject({
+      detail: expect.objectContaining({
+        id: "session-new",
+        title: "内容策划",
+      }),
+    });
+
+    window.removeEventListener("mosaic-session-created", sessionCreatedListener);
+  });
+
   it("creates and edits an assistant from the basic settings dialog", async () => {
     const api = createApi();
     const user = userEvent.setup();
@@ -351,6 +464,9 @@ describe("CharactersPage", () => {
     await user.click(screen.getByRole("button", { name: /MCP 工具/ }));
     await user.click(screen.getByLabelText(/文件系统/));
     await user.click(screen.getByRole("button", { name: /Skills/ }));
+    expect(screen.getByText("帮助梳理用户故事、边界条件和验收标准")).toBeInTheDocument();
+    expect(screen.getByText("内置")).toBeInTheDocument();
+    expect(screen.getByText("v1.2.0")).toBeInTheDocument();
     await user.click(screen.getByLabelText(/需求分析/));
     await user.click(screen.getByRole("button", { name: "应用全部设置" }));
 

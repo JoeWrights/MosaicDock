@@ -411,4 +411,19 @@ describe("WorkspaceLayout", () => {
     expect(mockClient.deleteSession).toHaveBeenCalledWith("session-1", { deleteWorkspace: false });
     expect(screen.queryByText("指数退避重试")).not.toBeInTheDocument();
   });
+
+  it("navigates to new-session after deleting the active chat session", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(await screen.findByRole("button", { name: "打开会话 指数退避重试" }));
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/chat/session-1");
+
+    await user.click(screen.getByRole("button", { name: "任务操作 指数退避重试" }));
+    await user.click(screen.getByRole("menuitem", { name: "删除" }));
+    await user.click(screen.getByRole("button", { name: "确定删除" }));
+
+    expect(mockClient.deleteSession).toHaveBeenCalledWith("session-1", { deleteWorkspace: false });
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/chat/new-session");
+  });
 });

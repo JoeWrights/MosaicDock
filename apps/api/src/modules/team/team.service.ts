@@ -112,6 +112,7 @@ export class TeamService {
       description?: string;
       avatarUrl?: string;
       leaderCharacterId?: string;
+      memberCharacterIds?: string[];
       settings?: any;
     },
   ) {
@@ -170,7 +171,15 @@ export class TeamService {
       }
     }
 
-    const updated = await this.teamRepo.update(id, data);
+    const { memberCharacterIds, ...teamData } = data;
+    const updated = await this.teamRepo.update(id, teamData);
+
+    if (memberCharacterIds) {
+      await this.replaceTeamMembers(id, updated.leaderCharacterId, memberCharacterIds);
+      const refreshed = await this.teamRepo.findById(id);
+      return this.transformTeamUrls(refreshed);
+    }
+
     return this.transformTeamUrls(updated);
   }
 
@@ -318,6 +327,46 @@ export class TeamService {
       description: character.description || undefined,
       avatarUrl: character.avatarUrl || undefined,
     };
+  }
+
+  private async replaceTeamMembers(teamId: string, leaderCharacterId: string, memberCharacterIds: string[]) {
+    const leader = await this.characterRepo.findById(leaderCharacterId);
+    if (!leader) {
+      throw new Error("主理人角色不存在");
+    }
+
+    const members: { teamId: string; characterId: string; role: string; sortOrder: number; characterSnapshot: any }[] = [
+      {
+        teamId,
+        characterId: leaderCharacterId,
+        role: "leader",
+        sortOrder: 0,
+        characterSnapshot: this.buildCharacterSnapshot(leader),
+      },
+    ];
+    const uniqueMemberIds = Array.from(new Set(memberCharacterIds)).filter(
+      (characterId) => characterId && characterId !== leaderCharacterId,
+    );
+
+    for (let index = 0; index < uniqueMemberIds.length; index++) {
+      const characterId = uniqueMemberIds[index];
+      const character = await this.characterRepo.findById(characterId);
+      if (!character) {
+        this.logger.warn(`角色 ${characterId} 不存在，跳过`);
+        continue;
+      }
+
+      members.push({
+        teamId,
+        characterId,
+        role: "member",
+        sortOrder: index + 1,
+        characterSnapshot: this.buildCharacterSnapshot(character),
+      });
+    }
+
+    await this.teamMemberRepo.deleteByTeamId(teamId);
+    await this.teamMemberRepo.createMany(members);
   }
 
 }

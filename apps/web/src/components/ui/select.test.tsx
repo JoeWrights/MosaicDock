@@ -56,4 +56,23 @@ describe("Select", () => {
     expect(container.contains(listbox)).toBe(false);
     expect(listbox.parentElement).toBe(document.body);
   });
+
+  it("shows a stable empty dropdown when there are no options", async () => {
+    const user = userEvent.setup();
+    render(
+      <Select
+        ariaLabel="引用知识库"
+        placeholder="请选择知识库（可多选）"
+        value=""
+        options={[]}
+        onValueChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("combobox", { name: "引用知识库" }));
+
+    const listbox = screen.getByRole("listbox", { name: "引用知识库" });
+    expect(listbox).toHaveClass("min-h-12");
+    expect(screen.getByText("暂无选项")).toBeInTheDocument();
+  });
 });

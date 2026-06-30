@@ -7,6 +7,7 @@ import type {
   CharacterToolsResponse,
   CreateCharacterGroupRequest,
   CreateCharacterRequest,
+  CreateTeamRequest,
   CreateKnowledgeBaseFolderRequest,
   CreateKnowledgeBaseRequest,
   LoginRequest,
@@ -24,8 +25,11 @@ import type {
   RenameKnowledgeBaseFileRequest,
   Session,
   SessionListResponse,
+  Team,
+  TeamListResponse,
   UpdateCharacterGroupRequest,
   UpdateCharacterRequest,
+  UpdateTeamRequest,
   UpdateKnowledgeBaseRequest,
   User,
 } from "@mosaic-dock/shared";
@@ -109,6 +113,25 @@ export interface BotInstance {
   updatedAt: string;
 }
 
+export interface BotConfigField {
+  key: string;
+  label: string;
+  type: "text" | "password" | "number" | "select" | "boolean";
+  required: boolean;
+  placeholder?: string;
+  description?: string;
+  options?: { value: string; label: string }[];
+  defaultValue?: unknown;
+}
+
+export interface BotPlatformMetadata {
+  platform: string;
+  displayName: string;
+  icon?: string;
+  description: string;
+  fields: BotConfigField[];
+}
+
 export interface CreateBotInstanceRequest {
   platform: string;
   name: string;
@@ -136,6 +159,55 @@ export interface UpdateBotInstanceRequest {
   defaultCharacterId?: string;
   defaultModelId?: string;
   additionalKwargs?: unknown;
+}
+
+export type TaskScheduleType = "cron" | "once";
+export type TaskTargetMode = "new_session" | "existing_session";
+
+export interface ScheduledTask {
+  id: string;
+  userId: string;
+  name: string;
+  prompt: string;
+  scheduleType: TaskScheduleType;
+  cronExpression: string;
+  executeAt?: string | null;
+  targetMode: TaskTargetMode;
+  targetSessionId?: string | null;
+  characterId?: string | null;
+  modelId?: string | null;
+  settings?: Record<string, unknown> | null;
+  enabled: boolean;
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  maxExecutions?: number | null;
+  executionCount?: number;
+  maxRetries?: number;
+  retryInterval?: number;
+}
+
+export type CreateScheduledTaskRequest = {
+  name: string;
+  prompt: string;
+  scheduleType: TaskScheduleType;
+  targetMode: TaskTargetMode;
+  cronExpression?: string;
+  executeAt?: string;
+  targetSessionId?: string;
+  characterId?: string;
+  modelId?: string;
+  settings?: Record<string, unknown>;
+  enabled?: boolean;
+  maxExecutions?: number;
+  maxRetries?: number;
+  retryInterval?: number;
+};
+
+export interface ScheduledTaskListResponse {
+  items: ScheduledTask[];
+  total: number;
 }
 
 export class ApiClient {
@@ -173,6 +245,54 @@ export class ApiClient {
 
   async fetchAllModels(): Promise<PaginatedResponse<ModelProvider>> {
     return modelService.fetchAllModels(this.requestClient);
+  }
+
+  async createProvider(data: modelService.CreateProviderRequest): Promise<ModelProvider> {
+    return modelService.createProvider(this.requestClient, data);
+  }
+
+  async testProviderConnection(
+    data: modelService.TestProviderConnectionRequest,
+  ): Promise<modelService.ProviderConnectionTestResult> {
+    return modelService.testProviderConnection(this.requestClient, data);
+  }
+
+  async updateProvider(
+    providerId: string,
+    data: modelService.UpdateProviderRequest,
+  ): Promise<ModelProvider> {
+    return modelService.updateProvider(this.requestClient, providerId, data);
+  }
+
+  async deleteProvider<T = { success: boolean }>(providerId: string): Promise<T> {
+    return modelService.deleteProvider<T>(this.requestClient, providerId);
+  }
+
+  async fetchRemoteModels(providerId: string): Promise<PaginatedResponse<modelService.RemoteModel>> {
+    return modelService.fetchRemoteModels(this.requestClient, providerId);
+  }
+
+  async createModel(data: modelService.ModelConfigRequest): Promise<import("@mosaic-dock/shared").Model> {
+    return modelService.createModel(this.requestClient, data);
+  }
+
+  async updateModel(
+    modelId: string,
+    data: modelService.UpdateModelRequest,
+  ): Promise<import("@mosaic-dock/shared").Model> {
+    return modelService.updateModel(this.requestClient, modelId, data);
+  }
+
+  async deleteModel<T = { success: boolean }>(modelId: string): Promise<T> {
+    return modelService.deleteModel<T>(this.requestClient, modelId);
+  }
+
+  async toggleModelFavorite(modelId: string): Promise<import("@mosaic-dock/shared").Model> {
+    return modelService.toggleModelFavorite(this.requestClient, modelId);
+  }
+
+  async toggleModelActive(modelId: string): Promise<import("@mosaic-dock/shared").Model> {
+    return modelService.toggleModelActive(this.requestClient, modelId);
   }
 
   async fetchSessionGroups<T = unknown>(): Promise<T> {
@@ -312,6 +432,12 @@ export class ApiClient {
     return bootstrapService.installSkillFromUrl<T>(this.requestClient, url, force);
   }
 
+  async installSkillFromRegistry<T = { success: boolean; message?: string; skillId?: string; skillIds?: string[] }>(
+    data: bootstrapService.InstallSkillFromRegistryRequest,
+  ): Promise<T> {
+    return bootstrapService.installSkillFromRegistry<T>(this.requestClient, data);
+  }
+
   async uninstallSkill<T = { success: boolean; message?: string }>(skillId: string): Promise<T> {
     return bootstrapService.uninstallSkill<T>(this.requestClient, skillId);
   }
@@ -382,6 +508,10 @@ export class ApiClient {
     return mcpServerService.fetchMcpServers(this.requestClient);
   }
 
+  async createMcpServer<T = McpServer>(data: Record<string, unknown>): Promise<T> {
+    return mcpServerService.createMcpServer<T>(this.requestClient, data);
+  }
+
   async toggleMcpServer<T = unknown>(serverId: string, enabled: boolean): Promise<T> {
     return mcpServerService.toggleMcpServer<T>(this.requestClient, serverId, enabled);
   }
@@ -392,6 +522,25 @@ export class ApiClient {
 
   async fetchBotInstances(): Promise<BotInstance[]> {
     return botAdminService.fetchBotInstances(this.requestClient);
+  }
+
+  async fetchBotPlatforms(): Promise<BotPlatformMetadata[]> {
+    return botAdminService.fetchBotPlatforms(this.requestClient);
+  }
+
+  async fetchScheduledTasks(): Promise<ScheduledTaskListResponse> {
+    return this.request<ScheduledTaskListResponse>("/scheduler/tasks");
+  }
+
+  async fetchSchedulerCronPresets<T = unknown>(): Promise<T> {
+    return this.request<T>("/scheduler/cron-presets");
+  }
+
+  async createScheduledTask(data: CreateScheduledTaskRequest): Promise<ScheduledTask> {
+    return this.request<ScheduledTask>("/scheduler/tasks", {
+      method: "POST",
+      body: data,
+    });
   }
 
   async createBotInstance(data: CreateBotInstanceRequest): Promise<BotInstance> {
@@ -414,8 +563,20 @@ export class ApiClient {
     return botAdminService.deleteBotInstance<T>(this.requestClient, botId);
   }
 
-  async fetchTeams<T = unknown>(): Promise<T> {
-    return bootstrapService.fetchTeams<T>(this.requestClient);
+  async fetchTeams(): Promise<TeamListResponse> {
+    return characterService.fetchTeams(this.requestClient);
+  }
+
+  async createTeam(data: CreateTeamRequest): Promise<Team> {
+    return characterService.createTeam(this.requestClient, data);
+  }
+
+  async updateTeam(teamId: string, data: UpdateTeamRequest): Promise<Team> {
+    return characterService.updateTeam(this.requestClient, teamId, data);
+  }
+
+  async deleteTeam<T = { success: boolean }>(teamId: string): Promise<T> {
+    return characterService.deleteTeam<T>(this.requestClient, teamId);
   }
 
   async createSession(data: CreateSessionRequest): Promise<Session> {

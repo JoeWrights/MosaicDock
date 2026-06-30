@@ -64,11 +64,13 @@ function createApi() {
           status: "stopped",
         },
       ]),
+      createMcpServer: vi.fn(async (server) => ({ id: "mcp-created", ...server })),
       triggerSkillScan: vi.fn(async () => ({ success: true })),
       toggleSkill: vi.fn(async (_skillId, enabled) => ({ success: true, enabled })),
       reloadSkill: vi.fn(async (_skillId) => ({ success: true })),
       installSkill: vi.fn(async (_file, _force) => ({ success: true, message: "安装成功" })),
       installSkillFromUrl: vi.fn(async (_url, _force) => ({ success: true, message: "安装成功" })),
+      installSkillFromRegistry: vi.fn(async (_request) => ({ success: true, message: "安装成功" })),
       uninstallSkill: vi.fn(async (_skillId) => ({ success: true, message: "卸载成功" })),
       fetchSkillDocumentation: vi.fn(async (_skillId) => ({
         content:
@@ -246,6 +248,97 @@ describe("PluginsPage", () => {
     expect(screen.getAllByRole("button", { name: "添加服务器" })).toHaveLength(1);
   });
 
+  it("imports Guada-style MCP server configuration JSON", async () => {
+    const user = userEvent.setup();
+    const { api } = renderPluginsPage("/plugins/mcp");
+
+    expect(await screen.findByText("Filesystem MCP")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "导入配置" }));
+
+    const dialog = screen.getByRole("dialog", { name: "导入 MCP 服务器配置" });
+    expect(within(dialog).getByText("请粘贴 MCP 服务器配置 JSON 数据，支持以下格式：")).toBeInTheDocument();
+    expect(within(dialog).getByText(/标准格式/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/单个服务器对象格式/)).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByPlaceholderText(/请粘贴 JSON 配置/), {
+      target: {
+        value: JSON.stringify({
+          mcpServers: {
+            WebSearch: {
+              type: "streamableHttp",
+              description: "描述信息",
+              isActive: true,
+              name: "阿里云百炼_联网搜索",
+              baseUrl: "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp",
+              headers: {
+                Authorization: "Bearer sk-xxx",
+              },
+            },
+          },
+        }),
+      },
+    });
+    await user.click(within(dialog).getByRole("button", { name: "导入" }));
+
+    await waitFor(() => {
+      expect(api.client.createMcpServer).toHaveBeenCalledWith({
+        name: "阿里云百炼_联网搜索",
+        url: "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp",
+        description: "描述信息",
+        headers: { Authorization: "Bearer sk-xxx" },
+        enabled: true,
+        type: "streamableHttp",
+      });
+    });
+    expect(await screen.findByText("成功导入 1 个服务器")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "导入 MCP 服务器配置" })).not.toBeInTheDocument();
+    expect(api.client.fetchMcpServers).toHaveBeenCalledTimes(2);
+  });
+
+  it("adds an MCP server with Guada-style form fields", async () => {
+    const user = userEvent.setup();
+    const { api } = renderPluginsPage("/plugins/mcp");
+
+    expect(await screen.findByText("Filesystem MCP")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "添加服务器" }));
+
+    const dialog = screen.getByRole("dialog", { name: "添加 MCP 服务器" });
+    await user.type(within(dialog).getByLabelText("服务器名称"), "阿里云百炼_联网搜索");
+    await user.type(
+      within(dialog).getByLabelText("服务地址"),
+      "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp",
+    );
+    await user.type(
+      within(dialog).getByLabelText("HTTP 请求头"),
+      "Authorization: Bearer sk-xxx\nX-API-Key: your_api_key",
+    );
+    await user.click(within(dialog).getByRole("combobox", { name: "协议类型" }));
+    await user.click(screen.getByRole("option", { name: "可流式传输的 HTTP (streamableHttp)" }));
+    await user.type(within(dialog).getByLabelText("描述信息"), "联网搜索");
+    await user.click(within(dialog).getByRole("button", { name: "确定" }));
+
+    await waitFor(() => {
+      expect(api.client.createMcpServer).toHaveBeenCalledWith({
+        name: "阿里云百炼_联网搜索",
+        url: "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp",
+        type: "streamableHttp",
+        description: "联网搜索",
+        headers: {
+          Authorization: "Bearer sk-xxx",
+          "X-API-Key": "your_api_key",
+        },
+        command: null,
+        args: null,
+        env: null,
+        cwd: null,
+        enabled: true,
+      });
+    });
+    expect(await screen.findByText("添加成功")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "添加 MCP 服务器" })).not.toBeInTheDocument();
+    expect(api.client.fetchMcpServers).toHaveBeenCalledTimes(2);
+  });
+
   it("installs a skill from a zip file with force overwrite", async () => {
     const user = userEvent.setup();
     const { api } = renderPluginsPage("/plugins/skills");
@@ -365,6 +458,58 @@ describe("PluginsPage", () => {
     });
     expect(await screen.findByText("安装成功")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "安装技能" })).not.toBeInTheDocument();
+    expect(api.client.fetchSkills).toHaveBeenCalledTimes(2);
+  });
+
+  it("installs a skill from a skills.sh identifier", async () => {
+    const user = userEvent.setup();
+    const { api } = renderPluginsPage("/plugins/skills");
+
+    expect(await screen.findByRole("heading", { name: "skill-creator" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "从 Skills.sh 安装" }));
+
+    const dialog = screen.getByRole("dialog", { name: "从 Skills.sh 安装" });
+    await user.type(
+      within(dialog).getByLabelText("Skills.sh 标识"),
+      "anthropics/skills/skill-creator",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "安装" }));
+
+    await waitFor(() => {
+      expect(api.client.installSkillFromRegistry).toHaveBeenCalledWith({
+        source: "skills-sh",
+        identifier: "anthropics/skills/skill-creator",
+        force: false,
+      });
+    });
+    expect(await screen.findByText("安装成功")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "从 Skills.sh 安装" })).not.toBeInTheDocument();
+    expect(api.client.fetchSkills).toHaveBeenCalledTimes(2);
+  });
+
+  it("installs a skill from a GitHub repository path", async () => {
+    const user = userEvent.setup();
+    const { api } = renderPluginsPage("/plugins/skills");
+
+    expect(await screen.findByRole("heading", { name: "skill-creator" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "从 GitHub 安装" }));
+
+    const dialog = screen.getByRole("dialog", { name: "从 GitHub 安装" });
+    await user.type(
+      within(dialog).getByLabelText("GitHub 仓库或路径"),
+      "https://github.com/acme/skills/tree/main/frontend-design",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "安装" }));
+
+    await waitFor(() => {
+      expect(api.client.installSkillFromRegistry).toHaveBeenCalledWith({
+        source: "github",
+        identifier: "https://github.com/acme/skills/tree/main/frontend-design",
+        force: false,
+      });
+    });
+    expect(await screen.findByText("安装成功")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "从 GitHub 安装" })).not.toBeInTheDocument();
     expect(api.client.fetchSkills).toHaveBeenCalledTimes(2);
   });
 

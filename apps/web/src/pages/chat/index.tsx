@@ -103,6 +103,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(() => getStoredWorkspacePanelWidth());
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [composerEditingMessage, setComposerEditingMessage] = useState<Message | null>(null);
   const [editDraft, setEditDraft] = useState("");
   const [deletingMessage, setDeletingMessage] = useState<Message | null>(null);
   const [modelProviders, setModelProviders] = useState<ModelProvider[]>([]);
@@ -128,6 +129,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const selectedModelName = selectedModel?.modelName ?? "选择模型";
   const selectedModelDisplayName = selectedModel ? getCompactModelName(selectedModel.modelName) : selectedModelName;
   const filteredProviderGroups = filterProviderGroups(modelProviders, modelSearch);
+  const lastUserMessageId = [...messages].reverse().find((message) => message.role === "user")?.id ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -531,7 +533,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
           <div className="min-h-0 flex-1 overflow-auto px-6 py-8">
             {loadingMessages ? (
               <Spinner />
-            ) : messages.length === 0 ? (
+            ) : messages.length === 0 && !activeSessionId ? (
               <EmptyState description="选择会话后开始对话" className="min-h-64" />
             ) : (
               <div className="mx-auto flex w-full max-w-[760px] flex-col gap-6">
@@ -546,6 +548,9 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                     onRegenerate={(message) => {
                       void regenerateMessage(message);
                     }}
+                    onGenerate={(message) => {
+                      void generateResponseFromUserMessage(message);
+                    }}
                     onEdit={(message) => {
                       openEditDialog(message);
                     }}
@@ -555,6 +560,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                     onContinue={(message) => {
                       void continueMessage(message);
                     }}
+                    allowGenerate={!streaming && item.role === "user" && item.id === lastUserMessageId}
                   />
                 ))}
                 <div ref={messagesEndRef} aria-hidden="true" />
@@ -564,6 +570,23 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
 
           <footer className="bg-white px-6 pb-6 pt-3 dark:bg-[#1e1f23]">
             <div className="mx-auto max-w-[760px] rounded-[22px] border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] dark:border-[#34363c] dark:bg-[#232428] dark:shadow-none">
+              {composerEditingMessage ? (
+                <div className="-mx-3 -mt-3 mb-3 flex items-center rounded-t-[22px] bg-slate-100 px-4 py-2 text-sm text-slate-600 dark:bg-[#2a2c30] dark:text-slate-300">
+                  <span className="flex-1">正在编辑消息</span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-7"
+                    onClick={() => {
+                      setComposerEditingMessage(null);
+                      setDraft("");
+                    }}
+                  >
+                    取消编辑
+                  </Button>
+                </div>
+              ) : null}
               <Textarea
                 value={draft}
                 disabled={!activeSessionId || streaming}
@@ -781,6 +804,12 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
     } finally {
       setStreaming(false);
     }
+  }
+
+  async function generateResponseFromUserMessage(message: Message) {
+    if (streaming) return;
+    setComposerEditingMessage(message);
+    setDraft(getMessageText(message));
   }
 
   async function continueMessage(message: Message) {
@@ -1201,9 +1230,11 @@ function appendAssistantToolCalls(messages: Message[], messageId: string, toolCa
 
     const lastContent = item.contents.at(-1);
     if (!lastContent) return item;
+    const detailContentId = getDetailContentId(lastContent);
+    const toolCallsWithDetailContentId = withToolDetailContentId(toolCalls, detailContentId);
     const nextToolContent = {
       ...createSiblingContent(lastContent, "tool"),
-      metadata: { ...lastContent.metadata, toolCalls },
+      metadata: { ...lastContent.metadata, detailContentId, toolCalls: toolCallsWithDetailContentId },
     };
 
     if (hasToolMetadata(lastContent)) {
@@ -1215,7 +1246,7 @@ function appendAssistantToolCalls(messages: Message[], messageId: string, toolCa
                 ...messageContent,
                 metadata: {
                   ...messageContent.metadata,
-                  toolCalls: mergeToolCalls(messageContent.metadata?.toolCalls, toolCalls),
+                  toolCalls: mergeToolCalls(messageContent.metadata?.toolCalls, toolCallsWithDetailContentId),
                 },
               }
             : messageContent,
@@ -1235,6 +1266,20 @@ function appendAssistantToolCalls(messages: Message[], messageId: string, toolCa
     return {
       ...item,
       contents: [...item.contents, nextToolContent],
+    };
+  });
+}
+
+function withToolDetailContentId(toolCalls: unknown[], detailContentId: string): unknown[] {
+  return toolCalls.map((toolCall) => {
+    const record = asRecord(toolCall);
+    if (!record) return toolCall;
+    return {
+      ...record,
+      metadata: {
+        ...(asRecord(record.metadata) ?? {}),
+        detailContentId,
+      },
     };
   });
 }
@@ -1381,14 +1426,20 @@ function appendAssistantReasoning(messages: Message[], messageId: string, conten
 }
 
 function createSiblingContent(content: Message["contents"][number], purpose: string): Message["contents"][number] {
+  const detailContentId = getDetailContentId(content);
   return {
     id: `${content.id}-${purpose}`,
     turnsId: content.turnsId,
     content: "",
     reasoningContent: "",
-    metadata: { modelName: content.metadata?.modelName },
+    metadata: { modelName: content.metadata?.modelName, detailContentId },
     state: { ...content.state, isStreaming: true },
   };
+}
+
+function getDetailContentId(content: Message["contents"][number]): string {
+  const detailContentId = content.metadata?.detailContentId;
+  return typeof detailContentId === "string" && detailContentId ? detailContentId : content.id;
 }
 
 function hasToolMetadata(content: Message["contents"][number]): boolean {

@@ -106,9 +106,17 @@ export function Select({
               id={listboxId}
               role="listbox"
               aria-label={ariaLabel}
-              className="fixed z-100 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg dark:border-[#2f3136] dark:bg-[#232428]"
+              className={cn(
+                "fixed z-100 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg dark:border-[#2f3136] dark:bg-[#232428]",
+                options.length === 0 ? "min-h-12" : "",
+              )}
               style={floatingStyle}
             >
+              {options.length === 0 ? (
+                <div className="flex min-h-10 items-center px-3 text-sm text-muted-foreground">
+                  暂无选项
+                </div>
+              ) : null}
               {options.map((option) => {
                 const selected = option.value === value;
                 return (

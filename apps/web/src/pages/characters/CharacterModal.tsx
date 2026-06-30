@@ -690,20 +690,35 @@ function SkillsTab({ form, skills, onChange }: { form: CharacterFormState; skill
       <div className="grid gap-3 md:grid-cols-2">
         {skills.map((skill) => {
           const enabled = form.skillsAuto || form.skillSettings[skill.id] === true;
+          const skillTitle = skill.displayName || skill.name || skill.id;
           return (
-            <label key={skill.id} className="flex items-center justify-between rounded-xl border border-slate-200 p-3 text-sm dark:border-[#2f3136]">
-              <span>
-                <span className="block font-semibold">{skill.displayName || skill.name || skill.id}</span>
-                <span className="line-clamp-2 text-xs text-muted-foreground">{skill.description || "暂无描述"}</span>
+            <label key={skill.id} className="rounded-xl border border-slate-200 p-3 text-sm dark:border-[#2f3136]">
+              <span className="flex items-start justify-between gap-2">
+                <span className="min-w-0 flex-1 truncate font-semibold">{skillTitle}</span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <Switch
+                    ariaLabel={skillTitle}
+                    disabled={form.skillsAuto}
+                    checked={enabled}
+                    onCheckedChange={(checked) =>
+                      onChange({ skillSettings: { ...form.skillSettings, [skill.id]: checked } })
+                    }
+                  />
+                  {skill.builtIn ? (
+                    <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-600 dark:bg-green-500/10 dark:text-green-300">
+                      内置
+                    </span>
+                  ) : null}
+                  {skill.version ? (
+                    <span className="rounded-full border border-slate-200 px-2 py-0.5 text-xs text-muted-foreground dark:border-[#3a3c42]">
+                      {formatSkillVersion(skill.version)}
+                    </span>
+                  ) : null}
+                </span>
               </span>
-              <Switch
-                ariaLabel={skill.displayName || skill.name || skill.id}
-                disabled={form.skillsAuto}
-                checked={enabled}
-                onCheckedChange={(checked) =>
-                  onChange({ skillSettings: { ...form.skillSettings, [skill.id]: checked } })
-                }
-              />
+              <span className="mt-2 block line-clamp-2 min-h-8 text-xs text-muted-foreground">
+                {skill.description || "暂无描述"}
+              </span>
             </label>
           );
         })}
@@ -711,6 +726,10 @@ function SkillsTab({ form, skills, onChange }: { form: CharacterFormState; skill
       </div>
     </div>
   );
+}
+
+function formatSkillVersion(version: string): string {
+  return version.startsWith("v") ? version : `v${version}`;
 }
 
 function SettingRow({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {

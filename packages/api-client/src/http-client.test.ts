@@ -94,6 +94,8 @@ describe("ApiClient", () => {
     await client.fetchSkillDocumentation("skill-creator");
     await client.installSkill(new File(["zip-bytes"], "skill.zip", { type: "application/zip" }), true);
     await client.installSkillFromUrl("https://ai.dingd.cn/skills/content-research-writer.zip", true);
+    await client.installSkillFromRegistry({ source: "skills-sh", identifier: "anthropics/skills/skill-creator", force: true });
+    await client.installSkillFromRegistry({ source: "github", identifier: "https://github.com/acme/skills/tree/main/frontend-design", force: false });
     await client.uninstallSkill("custom-skill");
     await client.toggleMcpServer("mcp-1", true);
     await client.refreshMcpServerTools("mcp-1");
@@ -108,6 +110,8 @@ describe("ApiClient", () => {
       "/skills/skill-creator/documentation",
       "/skills/install",
       "/skills/install-from-url",
+      "/skills/install-from-registry",
+      "/skills/install-from-registry",
       "/skills/custom-skill/uninstall",
       "/mcp-servers/mcp-1/toggle",
       "/mcp-servers/mcp-1/refresh-tools",
@@ -120,6 +124,8 @@ describe("ApiClient", () => {
       "post",
       "post",
       "get",
+      "post",
+      "post",
       "post",
       "post",
       "post",
@@ -136,6 +142,8 @@ describe("ApiClient", () => {
       undefined,
       expect.any(FormData),
       { url: "https://ai.dingd.cn/skills/content-research-writer.zip", force: true },
+      { source: "skills-sh", identifier: "anthropics/skills/skill-creator", force: true },
+      { source: "github", identifier: "https://github.com/acme/skills/tree/main/frontend-design", force: false },
       undefined,
       { enabled: true },
       undefined,
@@ -174,6 +182,49 @@ describe("ApiClient", () => {
       undefined,
       { groupIds: ["group-3", "group-1"] },
     ]);
+  });
+
+  it("manages scheduled tasks with backend scheduler endpoints", async () => {
+    const { adapter, calls } = createAdapter({ success: true });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+
+    await client.fetchScheduledTasks();
+    await client.fetchSchedulerCronPresets();
+    await client.createScheduledTask({
+      name: "每日早报",
+      prompt: "总结今天的计划",
+      scheduleType: "cron",
+      cronExpression: "0 9 * * *",
+      targetMode: "new_session",
+      characterId: "character-1",
+      modelId: "model-1",
+      maxExecutions: 10,
+      maxRetries: 1,
+      retryInterval: 60,
+    });
+
+    expect(calls.map((config) => config.url)).toEqual([
+      "/scheduler/tasks",
+      "/scheduler/cron-presets",
+      "/scheduler/tasks",
+    ]);
+    expect(calls.map((config) => config.method)).toEqual(["get", "get", "post"]);
+    expect(requestData(calls[2]!)).toEqual({
+      name: "每日早报",
+      prompt: "总结今天的计划",
+      scheduleType: "cron",
+      cronExpression: "0 9 * * *",
+      targetMode: "new_session",
+      characterId: "character-1",
+      modelId: "model-1",
+      maxExecutions: 10,
+      maxRetries: 1,
+      retryInterval: 60,
+    });
   });
 
   it("manages knowledge bases and files with legacy endpoints", async () => {
@@ -307,8 +358,28 @@ describe("ApiClient", () => {
     await client.createCharacterGroup({ name: "写作" });
     await client.updateCharacterGroup("group-1", { name: "产品" });
     await client.deleteCharacterGroup("group-2");
+    await client.fetchTeams();
+    await client.createTeam({
+      name: "内容策划",
+      description: "协同完成内容策划工作",
+      leaderCharacterId: "character-1",
+      memberCharacterIds: ["character-2"],
+    });
+    await client.updateTeam("team-1", {
+      name: "视频制作",
+      memberCharacterIds: ["character-3"],
+    });
+    await client.deleteTeam("team-2");
     await client.fetchCharacterTools("character-1");
     await client.fetchMcpServers();
+    await client.createMcpServer({
+      name: "WebSearch",
+      url: "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp",
+      type: "streamableHttp",
+      description: "联网搜索",
+      headers: { Authorization: "Bearer sk-xxx" },
+      enabled: true,
+    });
 
     expect(calls.map((config) => config.url)).toEqual([
       "/characters",
@@ -320,7 +391,12 @@ describe("ApiClient", () => {
       "/character-groups",
       "/character-groups/group-1",
       "/character-groups/group-2",
+      "/teams",
+      "/teams",
+      "/teams/team-1",
+      "/teams/team-2",
       "/characters/character-1/tools",
+      "/mcp-servers",
       "/mcp-servers",
     ]);
     expect(calls.map((config) => config.method)).toEqual([
@@ -334,7 +410,12 @@ describe("ApiClient", () => {
       "put",
       "delete",
       "get",
+      "post",
+      "put",
+      "delete",
       "get",
+      "get",
+      "post",
     ]);
     expect(calls[0]?.params).toEqual({ groupId: "group-1", skip: 10, limit: 30 });
     expect(calls.map(requestData)).toEqual([
@@ -353,7 +434,24 @@ describe("ApiClient", () => {
       { name: "产品" },
       undefined,
       undefined,
+      {
+        name: "内容策划",
+        description: "协同完成内容策划工作",
+        leaderCharacterId: "character-1",
+        memberCharacterIds: ["character-2"],
+      },
+      { name: "视频制作", memberCharacterIds: ["character-3"] },
       undefined,
+      undefined,
+      undefined,
+      {
+        name: "WebSearch",
+        url: "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp",
+        type: "streamableHttp",
+        description: "联网搜索",
+        headers: { Authorization: "Bearer sk-xxx" },
+        enabled: true,
+      },
     ]);
   });
 
@@ -421,6 +519,20 @@ describe("ApiClient", () => {
       autoStart: false,
     });
     expect(requestData(calls[2]!)).toEqual({ name: "客服机器人", enabled: false });
+  });
+
+  it("loads bot platform metadata from the bot admin endpoint", async () => {
+    const { adapter, calls } = createAdapter({ success: true });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+
+    await client.fetchBotPlatforms();
+
+    expect(calls.map((config) => config.url)).toEqual(["/bot-admin/platforms"]);
+    expect(calls.map((config) => config.method)).toEqual(["get"]);
   });
 
   it("normalizes paginated MCP server responses", async () => {

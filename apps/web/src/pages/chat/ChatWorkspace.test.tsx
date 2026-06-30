@@ -161,6 +161,33 @@ describe("ChatWorkspace", () => {
     expect(container.querySelector('[class*="ant-"]')).toBeNull();
   });
 
+  it("does not show the new-session empty prompt for an empty team session", async () => {
+    const api = baseApi();
+    api.client.fetchSession.mockImplementation(async () => ({
+      id: "session-team",
+      title: "测试团队",
+      characterId: "",
+      teamId: "team-1",
+      sessionType: "team",
+      modelId: "model-1",
+      userId: "user-1",
+      settings: {},
+      createdAt: "2026-06-27T09:00:00.000Z",
+      updatedAt: "2026-06-27T09:00:00.000Z",
+    }));
+    api.client.fetchSessionMessages.mockImplementation(async () => ({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 20,
+    }));
+
+    renderChat(api, "/chat/session-team");
+
+    expect(await screen.findByRole("heading", { name: "测试团队" })).toBeInTheDocument();
+    expect(screen.queryByText("选择会话后开始对话")).not.toBeInTheDocument();
+  });
+
   it("keeps the chat shell fixed while the message list scrolls internally", async () => {
     const { container } = renderChat();
 
@@ -215,6 +242,50 @@ describe("ChatWorkspace", () => {
     });
     expect(api.client.createMessage).not.toHaveBeenCalled();
     expect(await screen.findByText("这是新的 React 前端。")).toBeInTheDocument();
+  });
+
+  it("fills the composer instead of sending when generating from a user message", async () => {
+    const api = baseApi();
+    api.client.fetchSessionMessages.mockImplementation(async () => ({
+      items: [
+        {
+          id: "message-user-1",
+          role: "user" as const,
+          contents: [
+            {
+              id: "content-user-1",
+              content: "介绍一下项目",
+              state: { isStreaming: false },
+            },
+          ],
+          state: { isStreaming: false },
+        },
+        {
+          id: "message-assistant-1",
+          role: "assistant" as const,
+          parentId: "message-user-1",
+          contents: [
+            {
+              id: "content-assistant-1",
+              content: "你好，我是 Mosaic Dock。",
+              state: { isStreaming: false },
+            },
+          ],
+          state: { isStreaming: false },
+        },
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 20,
+    }));
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.click(await screen.findByRole("button", { name: "继续生成" }));
+
+    expect(screen.getByText("正在编辑消息")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("按 / 使用技能，Shift+Enter 换行")).toHaveValue("介绍一下项目");
+    expect(api.chatStream.chat).not.toHaveBeenCalled();
   });
 
   it("auto scrolls to the latest message while the assistant answer streams", async () => {
@@ -571,5 +642,54 @@ describe("ChatWorkspace", () => {
     expect(within(deleteDialog).getByText("确定要删除这条回答吗？此操作不可撤销。")).toBeInTheDocument();
     await user.click(within(deleteDialog).getByRole("button", { name: "确认" }));
     expect(api.client.deleteMessage).toHaveBeenCalledWith("message-1");
+  });
+
+  it("loads streamed tool details with the original persisted content id", async () => {
+    const api = baseApi();
+    api.client.fetchSessionMessages.mockImplementation(async () => ({
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 20,
+    }));
+    api.client.fetchMessageContentToolDetails = vi.fn(async () => ({
+      toolCalls: [{ name: "time.now", arguments: { format: "full" } }],
+      toolCallsResponse: [{ name: "time.now", content: "当前时间", toolCallId: "tool-1" }],
+    }));
+    api.chatStream.chat = vi.fn(async function* () {
+      yield {
+        type: "create" as const,
+        messageId: "assistant-real",
+        turnsId: "turn-1",
+        contentId: "content-real",
+        modelName: "DeepSeek-V3.2",
+      };
+      yield { type: "text" as const, content: "先看时间。" };
+      yield {
+        type: "tool_call" as const,
+        toolCalls: [
+          {
+            id: "tool-1",
+            name: "time.now",
+            metadata: { displayMessage: { action: "已获取当前时间", args: "full" } },
+          },
+        ],
+      };
+      yield {
+        type: "tool_calls_response" as const,
+        toolCallsResponse: [{ name: "time.now", content: "当前时间", toolCallId: "tool-1" }],
+      };
+      yield { type: "text" as const, content: "现在是 15:50。" };
+      yield { type: "finish" as const, finishReason: "stop" };
+    });
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "现在几点？");
+    await user.keyboard("{Enter}");
+    await user.click(await screen.findByRole("button", { name: /工具调用/ }));
+
+    expect(api.client.fetchMessageContentToolDetails).toHaveBeenCalledWith("content-real");
+    expect(api.client.fetchMessageContentToolDetails).not.toHaveBeenCalledWith(expect.stringContaining("-tool"));
   });
 });

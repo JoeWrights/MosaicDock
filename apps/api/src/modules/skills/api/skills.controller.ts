@@ -410,6 +410,91 @@ export class SkillsController {
   }
 
   /**
+   * 从外部技能注册表安装技能。
+   * skills.sh 使用 GitHub owner/repo[/skillPath] 标识，这里下载仓库 archive 后复用本地安装逻辑。
+   */
+  @Post('install-from-registry')
+  async installFromRegistry(@Body() body: {
+    source: string;
+    identifier: string;
+    force?: boolean;
+  }): Promise<{ success: boolean; skillIds?: string[]; message: string }> {
+    try {
+      const { source, identifier, force } = body;
+      const parsed = source === 'skills-sh'
+        ? this.parseSkillsShIdentifier(identifier)
+        : source === 'github'
+          ? this.parseGitHubIdentifier(identifier)
+          : null;
+      if (source !== 'skills-sh' && source !== 'github') {
+        return { success: false, message: `Unsupported registry source: ${source}` };
+      }
+      if (!parsed) {
+        return {
+          success: false,
+          message: source === 'github'
+            ? 'Invalid GitHub identifier. Expected owner/repo, owner/repo/path/to/skill, or a github.com repository URL'
+            : 'Invalid skills.sh identifier. Expected owner/repo or owner/repo/path/to/skill',
+        };
+      }
+
+      const archiveUrl = `https://codeload.github.com/${parsed.owner}/${parsed.repo}/zip/refs/heads/${parsed.branch}`;
+      const tempDir = path.join(process.cwd(), 'temp', `skill-registry-${Date.now()}`);
+      await fs.mkdir(tempDir, { recursive: true });
+
+      const zipPath = path.join(tempDir, 'registry-skill.zip');
+      const response = await fetch(archiveUrl);
+      if (!response.ok) {
+        await fs.rm(tempDir, { recursive: true, force: true });
+        return { success: false, message: `Failed to download registry archive: HTTP ${response.status} ${response.statusText}` };
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      await fs.writeFile(zipPath, buffer);
+
+      let zip: AdmZip;
+      try {
+        zip = new AdmZip(zipPath);
+      } catch {
+        await fs.rm(tempDir, { recursive: true, force: true });
+        return { success: false, message: 'Downloaded registry archive is not a valid ZIP file' };
+      }
+      zip.extractAllTo(tempDir, true);
+
+      const installDir = await this.resolveRegistryInstallDir(tempDir, parsed.skillPath);
+      if (!installDir) {
+        await fs.rm(tempDir, { recursive: true, force: true });
+        return { success: false, message: `Skill path '${parsed.skillPath || '.'}' not found in registry archive` };
+      }
+
+      const result = await this.installSkillsFromDir(installDir, force);
+      await fs.rm(tempDir, { recursive: true, force: true });
+
+      if (result.installed.length > 0) {
+        await this.orchestrator.triggerScan();
+      }
+
+      const parts: string[] = [];
+      if (result.installed.length > 0) {
+        parts.push(`Installed: ${result.installed.map(s => `'${s.skillId}'`).join(', ')}`);
+      }
+      if (result.errors.length > 0) {
+        parts.push(`Errors: ${result.errors.map(e => e.error).join('; ')}`);
+      }
+
+      return {
+        success: result.installed.length > 0,
+        skillIds: result.installed.map(s => s.skillId),
+        message: parts.length > 0 ? parts.join('. ') : 'No skills found in registry archive',
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to install skill from registry: ${errorMessage}`);
+      return { success: false, message: `Registry installation failed: ${errorMessage}` };
+    }
+  }
+
+  /**
    * 更新技能（从 Git 重新拉取）
    */
   @Post(':id/update')
@@ -544,6 +629,90 @@ export class SkillsController {
       this.logger.error(`Failed to uninstall skill: ${errorMessage}`);
       return { success: false, message: `Uninstallation failed: ${errorMessage}` };
     }
+  }
+
+  private parseSkillsShIdentifier(identifier: string | undefined): {
+    owner: string;
+    repo: string;
+    branch: string;
+    skillPath: string;
+  } | null {
+    if (!identifier) return null;
+    const normalized = identifier.trim().replace(/^https:\/\/www\.skills\.sh\/?/i, '');
+    const segments = normalized.split('/').filter(Boolean);
+    if (segments.length < 2) return null;
+    if (!segments.every(segment => /^[A-Za-z0-9._-]+$/.test(segment))) return null;
+
+    const [owner, repo, ...pathSegments] = segments;
+    return {
+      owner,
+      repo,
+      branch: 'main',
+      skillPath: pathSegments.join('/'),
+    };
+  }
+
+  private parseGitHubIdentifier(identifier: string | undefined): {
+    owner: string;
+    repo: string;
+    branch: string;
+    skillPath: string;
+  } | null {
+    if (!identifier) return null;
+    const trimmed = identifier.trim();
+    let segments: string[];
+    let branch = 'main';
+
+    try {
+      const url = new URL(trimmed);
+      if (url.hostname !== 'github.com') return null;
+      segments = url.pathname.split('/').filter(Boolean);
+      if (segments.length >= 4 && segments[2] === 'tree') {
+        branch = segments[3];
+        segments = [segments[0], segments[1], ...segments.slice(4)];
+      }
+    } catch {
+      segments = trimmed.replace(/^\/+/, '').split('/').filter(Boolean);
+    }
+
+    if (segments.length < 2) return null;
+    if (![...segments, branch].every(segment => /^[A-Za-z0-9._-]+$/.test(segment))) return null;
+
+    const [owner, repo, ...pathSegments] = segments;
+    return {
+      owner,
+      repo: repo.replace(/\.git$/, ''),
+      branch,
+      skillPath: pathSegments.join('/'),
+    };
+  }
+
+  private async resolveRegistryInstallDir(tempDir: string, skillPath: string): Promise<string | null> {
+    const entries = await fs.readdir(tempDir, { withFileTypes: true });
+    const archiveRoot = entries.find(entry => entry.isDirectory() && !entry.name.startsWith('.'));
+    if (!archiveRoot) return null;
+
+    const rootDir = path.join(tempDir, archiveRoot.name);
+    if (!skillPath) return rootDir;
+
+    const candidates = [
+      path.join(rootDir, skillPath),
+      path.join(rootDir, 'skills', skillPath),
+    ];
+
+    for (const targetDir of candidates) {
+      const relative = path.relative(rootDir, targetDir);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) continue;
+
+      try {
+        const stat = await fs.stat(targetDir);
+        if (stat.isDirectory()) return targetDir;
+      } catch {
+        // Try the next known registry layout.
+      }
+    }
+
+    return null;
   }
 
   /**

@@ -110,6 +110,22 @@ export function installSkillFromUrl<T = { success: boolean; message?: string; sk
   });
 }
 
+export interface InstallSkillFromRegistryRequest {
+  source: "skills-sh" | "github";
+  identifier: string;
+  force?: boolean;
+}
+
+export function installSkillFromRegistry<T = { success: boolean; message?: string; skillId?: string; skillIds?: string[] }>(
+  request: RestRequestClient,
+  data: InstallSkillFromRegistryRequest,
+): Promise<T> {
+  return request.request<T>("/skills/install-from-registry", {
+    method: "POST",
+    body: data,
+  });
+}
+
 export function uninstallSkill<T = { success: boolean; message?: string }>(
   request: RestRequestClient,
   skillId: string,

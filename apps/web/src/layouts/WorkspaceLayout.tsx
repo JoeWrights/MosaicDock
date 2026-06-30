@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   AlarmClock,
   Bot,
@@ -119,20 +119,28 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
   }, [location.pathname]);
   const isChatWorkspaceRoute = activeKey === "chat";
 
+  const loadSidebarData = useCallback(async () => {
+    const groupsResponse = await api.client.fetchSessionGroups();
+    const groups = normalizeSessionGroups(groupsResponse);
+    const sessionResponses = await Promise.all([
+      ...groups.map((group) => api.client.fetchSessions({ skip: 0, limit: 10, groupId: group.id })),
+      api.client.fetchSessions({ skip: 0, limit: 10, groupId: null }),
+    ]);
+    return {
+      groups,
+      sessions: sessionResponses.flatMap((response) => response.items),
+    };
+  }, [api]);
+
   useEffect(() => {
     let cancelled = false;
 
-    async function loadSidebarData() {
+    async function loadInitialSidebarData() {
       try {
-        const groupsResponse = await api.client.fetchSessionGroups();
-        const groups = normalizeSessionGroups(groupsResponse);
-        const sessionResponses = await Promise.all([
-          ...groups.map((group) => api.client.fetchSessions({ skip: 0, limit: 10, groupId: group.id })),
-          api.client.fetchSessions({ skip: 0, limit: 10, groupId: null }),
-        ]);
+        const data = await loadSidebarData();
         if (!cancelled) {
-          setSessions(sessionResponses.flatMap((response) => response.items));
-          setSessionGroups(groups);
+          setSessions(data.sessions);
+          setSessionGroups(data.groups);
         }
       } catch {
         if (!cancelled) {
@@ -142,12 +150,33 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
       }
     }
 
-    void loadSidebarData();
+    void loadInitialSidebarData();
 
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [loadSidebarData]);
+
+  useEffect(() => {
+    function handleSessionCreated(event: Event) {
+      const session = (event as CustomEvent<unknown>).detail;
+      if (isSessionLike(session)) {
+        setSessions((current) => [
+          session,
+          ...current.filter((item) => item.id !== session.id),
+        ]);
+        return;
+      }
+
+      void loadSidebarData().then((data) => {
+        setSessions(data.sessions);
+        setSessionGroups(data.groups);
+      });
+    }
+
+    window.addEventListener("mosaic-session-created", handleSessionCreated);
+    return () => window.removeEventListener("mosaic-session-created", handleSessionCreated);
+  }, [loadSidebarData]);
 
   function handleNavigate(path?: string) {
     if (!path) return;
@@ -210,6 +239,9 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
 
     await api.client.deleteSession(deleteTarget.id, { deleteWorkspace });
     setSessions((current) => current.filter((session) => session.id !== deleteTarget.id));
+    if (deleteTarget.id === sessionId) {
+      void navigate(`${RoutePath.CHAT}/new-session`);
+    }
     setDeleteTarget(null);
     setDeleteWorkspace(false);
   }
@@ -593,6 +625,17 @@ function normalizeSessionGroups(response: unknown): SessionGroup[] {
       name: item.name,
       sortOrder: typeof item.sortOrder === "number" ? item.sortOrder : index,
     }));
+}
+
+function isSessionLike(value: unknown): value is Session {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    "title" in value &&
+    typeof (value as { id: unknown }).id === "string" &&
+    typeof (value as { title: unknown }).title === "string"
+  );
 }
 
 export default WorkspaceLayout;

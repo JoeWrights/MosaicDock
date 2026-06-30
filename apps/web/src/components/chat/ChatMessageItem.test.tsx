@@ -16,6 +16,7 @@ const assistantMessage = (): Message => ({
       content: "## 完成\n\n```ts\nconst ok = true;\n```",
       reasoningContent: "先检查上下文，再生成答案。",
       thinkingDurationMs: 1200,
+      createdAt: "2026-06-29T15:20:00.000",
       state: { isStreaming: false },
       metadata: {
         modelName: "DeepSeek-V3.2",
@@ -33,7 +34,51 @@ const assistantMessage = (): Message => ({
   ],
 });
 
+const userMessage = (): Message => ({
+  id: "user-1",
+  role: "user",
+  state: { isStreaming: false },
+  contents: [
+    {
+      id: "user-content-1",
+      content: "指数退避重试",
+      state: { isStreaming: false },
+    },
+  ],
+});
+
 describe("ChatMessageItem", () => {
+  it("renders Guada-style actions below user messages", async () => {
+    const user = userEvent.setup();
+    const onGenerate = vi.fn();
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+
+    render(
+      <ChatMessageItem
+        message={userMessage()}
+        allowGenerate
+        onGenerate={onGenerate}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />,
+    );
+
+    expect(screen.getByText("指数退避重试")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制用户消息" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "继续生成" }));
+    expect(onGenerate).toHaveBeenCalledWith(userMessage());
+
+    await user.click(screen.getByRole("button", { name: "更多操作" }));
+    await user.click(screen.getByRole("menuitem", { name: "编辑内容" }));
+    expect(onEdit).toHaveBeenCalledWith(userMessage());
+
+    await user.click(screen.getByRole("button", { name: "更多操作" }));
+    await user.click(screen.getByRole("menuitem", { name: "删除消息" }));
+    expect(onDelete).toHaveBeenCalledWith(userMessage());
+  });
+
   it("shows a loading state before streaming answer text arrives", () => {
     const message: Message = {
       id: "assistant-streaming",
@@ -83,6 +128,7 @@ describe("ChatMessageItem", () => {
     expect(screen.getByText("Prompt 10")).toBeInTheDocument();
     expect(screen.getByText("Completion 20")).toBeInTheDocument();
     expect(screen.getByText("Total 30")).toBeInTheDocument();
+    expect(screen.getByTitle("2026-06-29 15:20:00")).toHaveTextContent("15:20");
     const toolNode = screen.getByText("已写入文件");
     const answerNode = container.querySelector(".markdown-text");
     expect(answerNode).not.toBeNull();
@@ -91,9 +137,10 @@ describe("ChatMessageItem", () => {
 
   it("opens tool details and switches content versions with Guada-style pager", async () => {
     const user = userEvent.setup();
+    const longExecutionResult = `{"stderr":"${"TS2304Cannotfindname".repeat(20)}"}`;
     const onFetchToolDetails = vi.fn(async () => ({
       toolCalls: [{ name: "file.write", arguments: { path: "README.md" } }],
-      toolCallsResponse: [{ name: "file.write", content: "ok", toolCallId: "tool-1" }],
+      toolCallsResponse: [{ name: "file.write", content: longExecutionResult, toolCallId: "tool-1" }],
     }));
     const onSwitchVersion = vi.fn();
     render(
@@ -106,7 +153,15 @@ describe("ChatMessageItem", () => {
 
     await user.click(screen.getByRole("button", { name: /工具调用/ }));
     expect(await screen.findByText("工具调用详情")).toBeInTheDocument();
+    expect(screen.getByText("执行结果")).toBeInTheDocument();
+    const executionResult = screen.getByText(longExecutionResult);
+    expect(executionResult).toBeInTheDocument();
+    expect(executionResult).toHaveClass("max-w-full", "wrap-break-word", "overflow-auto");
     expect(onFetchToolDetails).toHaveBeenCalledWith("content-1");
+
+    await user.click(screen.getByRole("button", { name: /工具调用/ }));
+    expect(screen.queryByText("工具调用详情")).not.toBeInTheDocument();
+    expect(onFetchToolDetails).toHaveBeenCalledTimes(1);
 
     expect(screen.getByText("1 / 2")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /版本 2/ })).not.toBeInTheDocument();

@@ -5,6 +5,16 @@ export function fetchMcpServers(request: RestRequestClient): Promise<McpServer[]
   return request.request<McpServer[] | { items?: unknown }>("/mcp-servers").then(normalizeMcpServers);
 }
 
+export function createMcpServer<T = McpServer>(
+  request: RestRequestClient,
+  data: Record<string, unknown>,
+): Promise<T> {
+  return request.request<T>("/mcp-servers", {
+    method: "POST",
+    body: data,
+  });
+}
+
 export function toggleMcpServer<T = unknown>(
   request: RestRequestClient,
   serverId: string,

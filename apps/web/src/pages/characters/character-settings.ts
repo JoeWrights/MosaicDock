@@ -27,6 +27,12 @@ export interface SkillOption {
   enabled?: boolean;
   builtIn?: boolean;
   version?: string;
+  source?: string;
+  manifest?: {
+    name?: string;
+    description?: string;
+    version?: string;
+  };
 }
 
 export interface CharacterFormState {
@@ -184,7 +190,14 @@ export function normalizeSkills(response: unknown): SkillOption[] {
     .filter((item): item is SkillOption => {
       return typeof item === "object" && item !== null && "id" in item;
     })
-    .filter((skill) => skill.enabled !== false);
+    .filter((skill) => skill.enabled !== false)
+    .map((skill) => ({
+      ...skill,
+      name: skill.manifest?.name ?? skill.name,
+      description: skill.manifest?.description ?? skill.description,
+      version: skill.manifest?.version ?? skill.version,
+      builtIn: skill.builtIn ?? skill.source === "system",
+    }));
 }
 
 export function normalizeMcpServers(response: unknown): McpServer[] {

@@ -5,7 +5,9 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Copy,
+  ArrowDown,
   MoreVertical,
   Pencil,
   RotateCcw,
@@ -30,9 +32,11 @@ interface ChatMessageItemProps {
   onFetchToolDetails?: (contentId: string) => Promise<{ toolCalls: unknown[]; toolCallsResponse: unknown[] }>;
   onSwitchVersion?: (messageId: string, contentId: string) => void;
   onRegenerate?: (message: Message) => void;
+  onGenerate?: (message: Message) => void;
   onEdit?: (message: Message) => void;
   onDelete?: (message: Message) => void;
   onContinue?: (message: Message) => void;
+  allowGenerate?: boolean;
 }
 
 export function ChatMessageItem({
@@ -40,9 +44,11 @@ export function ChatMessageItem({
   onFetchToolDetails,
   onSwitchVersion,
   onRegenerate,
+  onGenerate,
   onEdit,
   onDelete,
   onContinue,
+  allowGenerate = false,
 }: ChatMessageItemProps) {
   const turns = getCurrentTurns(message);
   const activeContent = turns[0];
@@ -51,12 +57,24 @@ export function ChatMessageItem({
   const versions = getContentVersions(message);
   const displayGroups = groupContentsForDisplay(turns);
   const isWaitingForAnswer = isStreamingEmptyAssistant(message, turns);
+  const contentTime = formatMessageContentTime(activeContent?.createdAt);
 
   if (message.role === "user") {
     return (
       <article className="flex w-full justify-end gap-3">
-        <div className="max-w-[70%] whitespace-pre-wrap rounded-2xl bg-blue-50 px-4 py-3 leading-7 text-blue-700 shadow-sm dark:bg-blue-500/15 dark:text-blue-100">
-          {turns.map((content) => content.content ?? "").join("")}
+        <div className="flex max-w-[70%] flex-col items-end">
+          <div className="whitespace-pre-wrap rounded-2xl bg-blue-50 px-4 py-3 leading-7 text-blue-700 shadow-sm dark:bg-blue-500/15 dark:text-blue-100">
+            {turns.map((content) => content.content ?? "").join("")}
+          </div>
+          <MessageActions
+            message={message}
+            versions={[]}
+            allowGenerate={allowGenerate}
+            onGenerate={onGenerate}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            contentTime={null}
+          />
         </div>
         <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-blue-600 text-xs font-medium text-white">
           我
@@ -109,6 +127,7 @@ export function ChatMessageItem({
           onRegenerate={onRegenerate}
           onEdit={onEdit}
           onDelete={onDelete}
+          contentTime={contentTime}
         />
       </div>
     </article>
@@ -205,13 +224,20 @@ function ToolCallsSection({
   toolResponses: ToolCallResponse[];
   onFetchToolDetails?: (contentId: string) => Promise<{ toolCalls: unknown[]; toolCallsResponse: unknown[] }>;
 }) {
+  const detailContentId = getToolDetailContentId(contentId, toolCalls);
   const [open, setOpen] = useState(false);
   const [details, setDetails] = useState<{ toolCalls: unknown[]; toolCallsResponse: unknown[] } | null>(null);
+  const executionResults = getToolExecutionResults(details?.toolCallsResponse ?? toolResponses);
 
-  async function openDetails() {
+  async function toggleDetails() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+
     setOpen(true);
     if (!details && onFetchToolDetails) {
-      setDetails(await onFetchToolDetails(contentId));
+      setDetails(await onFetchToolDetails(detailContentId));
     }
   }
 
@@ -222,7 +248,7 @@ function ToolCallsSection({
           key={`${tool.name ?? "tool"}-${index}`}
           type="button"
           className="flex max-w-full items-center gap-2 rounded-md py-1 text-left text-sm text-muted-foreground hover:text-foreground"
-          onClick={() => void openDetails()}
+          onClick={() => void toggleDetails()}
         >
           <Wrench className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span className="font-medium text-slate-700 dark:text-slate-200">{getToolAction(tool)}</span>
@@ -231,14 +257,32 @@ function ToolCallsSection({
         </button>
       ))}
       {open ? (
-        <div role="dialog" aria-label="工具调用详情" className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm dark:border-[#34363c] dark:bg-[#1f2024]">
+        <div role="dialog" aria-label="工具调用详情" className="mt-2 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm dark:border-[#34363c] dark:bg-[#1f2024]">
           <div className="mb-2 flex items-center gap-2 font-semibold">
             <CheckCircle2 className="h-4 w-4 text-green-500" aria-hidden="true" />
             工具调用详情
           </div>
-          <pre className="max-h-56 overflow-auto whitespace-pre-wrap text-xs text-slate-600 dark:text-slate-300">
+          <pre className="max-h-56 max-w-full overflow-auto whitespace-pre-wrap wrap-break-word text-xs text-slate-600 dark:text-slate-300">
             {JSON.stringify(details ?? { toolCalls, toolCallsResponse: toolResponses }, null, 2)}
           </pre>
+          {executionResults.length > 0 ? (
+            <div className="rounded-lg bg-white p-3 dark:bg-[#232428]">
+              <div className="mb-2 flex items-center gap-2 font-semibold">
+                <CheckCircle2 className="h-4 w-4 text-green-500" aria-hidden="true" />
+                执行结果
+              </div>
+              <div className="space-y-2">
+                {executionResults.map((result, index) => (
+                  <pre
+                    key={`${result.toolCallId ?? result.name ?? "result"}-${index}`}
+                    className="max-w-full overflow-auto whitespace-pre-wrap wrap-break-word rounded-md bg-slate-50 p-2 text-xs text-slate-600 dark:bg-[#1f2024] dark:text-slate-300"
+                  >
+                    {result.content}
+                  </pre>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -250,16 +294,22 @@ function MessageActions({
   versions,
   onSwitchVersion,
   onRegenerate,
+  onGenerate,
   onEdit,
   onDelete,
+  contentTime,
+  allowGenerate = false,
 }: {
   message: Message;
   versions: ContentVersion[];
   activeContentId?: string;
   onSwitchVersion?: (messageId: string, contentId: string) => void;
   onRegenerate?: (message: Message) => void;
+  onGenerate?: (message: Message) => void;
   onEdit?: (message: Message) => void;
   onDelete?: (message: Message) => void;
+  contentTime: FormattedMessageTime | null;
+  allowGenerate?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
@@ -280,6 +330,8 @@ function MessageActions({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [menuOpen]);
 
+  const isAssistant = message.role === "assistant";
+
   if (message.state?.isStreaming) return null;
 
   function toggleMenu() {
@@ -294,16 +346,39 @@ function MessageActions({
   }
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-1 text-muted-foreground">
-      <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => copyMessage(message)}>
+    <div className={cn("mt-2 flex w-full flex-wrap items-center gap-1 text-muted-foreground", isAssistant ? "justify-start" : "justify-end")}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2"
+        aria-label={isAssistant ? "复制助手消息" : "复制用户消息"}
+        onClick={() => copyMessage(message)}
+      >
         <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-        复制
+        <span className="sr-only">复制</span>
       </Button>
-      <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => onRegenerate?.(message)}>
-        <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-        重新生成
-      </Button>
-      <VersionPager message={message} versions={versions} onSwitchVersion={onSwitchVersion} />
+      {!isAssistant && allowGenerate ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2"
+          aria-label="继续生成"
+          onClick={() => onGenerate?.(message)}
+        >
+          <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
+      ) : null}
+      {isAssistant ? (
+        <>
+          <Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={() => onRegenerate?.(message)}>
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+            重新生成
+          </Button>
+          <VersionPager message={message} versions={versions} onSwitchVersion={onSwitchVersion} />
+        </>
+      ) : null}
       <div className="relative inline-flex">
         <Button
           ref={moreButtonRef}
@@ -358,6 +433,15 @@ function MessageActions({
             )
           : null}
       </div>
+      {contentTime ? (
+        <span
+          className="ml-auto inline-flex h-7 items-center gap-1 px-2 text-xs text-muted-foreground"
+          title={contentTime.full}
+        >
+          <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+          {contentTime.friendly}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -447,6 +531,33 @@ function getUsage(content?: MessageContent) {
   };
 }
 
+interface FormattedMessageTime {
+  friendly: string;
+  full: string;
+}
+
+function formatMessageContentTime(value?: string): FormattedMessageTime | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const year = date.getFullYear();
+  const month = padDatePart(date.getMonth() + 1);
+  const day = padDatePart(date.getDate());
+  const hour = padDatePart(date.getHours());
+  const minute = padDatePart(date.getMinutes());
+  const second = padDatePart(date.getSeconds());
+
+  return {
+    friendly: `${hour}:${minute}`,
+    full: `${year}-${month}-${day} ${hour}:${minute}:${second}`,
+  };
+}
+
+function padDatePart(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
 function isStreamingEmptyAssistant(message: Message, contents: MessageContent[]): boolean {
   if (!message.state?.isStreaming) return false;
 
@@ -474,6 +585,28 @@ function getToolArgs(tool: ToolCallSummary): string {
   const display = tool.metadata?.displayMessage;
   if (display && typeof display === "object" && typeof display.args === "string") return display.args;
   return "";
+}
+
+function getToolDetailContentId(contentId: string, toolCalls: ToolCallSummary[]): string {
+  for (const tool of toolCalls) {
+    const detailContentId = tool.metadata?.detailContentId;
+    if (typeof detailContentId === "string" && detailContentId.trim()) return detailContentId;
+  }
+
+  return contentId;
+}
+
+function getToolExecutionResults(value: unknown[]): ToolCallResponse[] {
+  return value
+    .filter((item): item is ToolCallResponse => {
+      return (
+        typeof item === "object" &&
+        item !== null &&
+        "content" in item &&
+        typeof (item as { content?: unknown }).content === "string" &&
+        Boolean((item as { content?: string }).content?.trim())
+      );
+    });
 }
 
 function getMetadataString(value: unknown): string | null {

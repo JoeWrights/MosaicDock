@@ -1,9 +1,14 @@
 import type {
   BotInstance,
+  BotPlatformMetadata,
   CreateBotInstanceRequest,
   UpdateBotInstanceRequest,
 } from "../http-client";
 import type { RestRequestClient } from "../request";
+
+export function fetchBotPlatforms(request: RestRequestClient): Promise<BotPlatformMetadata[]> {
+  return request.request<BotPlatformMetadata[]>("/bot-admin/platforms");
+}
 
 export function fetchBotInstances(request: RestRequestClient): Promise<BotInstance[]> {
   return request.request<BotInstance[]>("/bot-admin/instances");

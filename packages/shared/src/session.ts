@@ -19,6 +19,7 @@ export interface Session {
   title: string;
   character?: Character;
   characterId: string;
+  teamId?: string;
   modelId: string;
   model?: SessionModel;
   userId: string;
@@ -38,7 +39,8 @@ export interface Session {
 }
 
 export interface CreateSessionRequest {
-  characterId: string;
+  characterId?: string;
+  teamId?: string;
   modelId?: string;
   title?: string;
   settings?: Partial<SessionSettings>;

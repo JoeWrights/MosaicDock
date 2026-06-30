@@ -6,8 +6,12 @@ import type {
   CharacterToolsResponse,
   CreateCharacterGroupRequest,
   CreateCharacterRequest,
+  CreateTeamRequest,
+  Team,
+  TeamListResponse,
   UpdateCharacterGroupRequest,
   UpdateCharacterRequest,
+  UpdateTeamRequest,
 } from "@mosaic-dock/shared";
 import type { RestRequestClient } from "../request";
 
@@ -87,6 +91,37 @@ export function deleteCharacterGroup<T = { success: boolean }>(
   groupId: string,
 ): Promise<T> {
   return request.request<T>(`/character-groups/${groupId}`, {
+    method: "DELETE",
+  });
+}
+
+export function fetchTeams(request: RestRequestClient): Promise<TeamListResponse> {
+  return request.request<TeamListResponse>("/teams");
+}
+
+export function createTeam(request: RestRequestClient, data: CreateTeamRequest): Promise<Team> {
+  return request.request<Team>("/teams", {
+    method: "POST",
+    body: data,
+  });
+}
+
+export function updateTeam(
+  request: RestRequestClient,
+  teamId: string,
+  data: UpdateTeamRequest,
+): Promise<Team> {
+  return request.request<Team>(`/teams/${teamId}`, {
+    method: "PUT",
+    body: data,
+  });
+}
+
+export function deleteTeam<T = { success: boolean }>(
+  request: RestRequestClient,
+  teamId: string,
+): Promise<T> {
+  return request.request<T>(`/teams/${teamId}`, {
     method: "DELETE",
   });
 }

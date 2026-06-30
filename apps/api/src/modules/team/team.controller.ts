@@ -57,6 +57,7 @@ export class TeamController {
       description: data.description,
       avatarUrl: data.avatarUrl,
       leaderCharacterId: data.leaderCharacterId,
+      memberCharacterIds: data.memberCharacterIds,
       settings: data.settings,
     });
   }
