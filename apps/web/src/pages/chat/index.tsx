@@ -51,6 +51,7 @@ export interface ChatWorkspaceApi {
     | "fetchWorkspaceChildren"
     | "fetchWorkspaceFile"
     | "fetchModels"
+    | "updateSession"
   >;
   chatStream: Pick<ChatStreamService, "chat" | "cancelResponse">;
 }
@@ -129,6 +130,8 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const selectedModelName = selectedModel?.modelName ?? "选择模型";
   const selectedModelDisplayName = selectedModel ? getCompactModelName(selectedModel.modelName) : selectedModelName;
   const filteredProviderGroups = filterProviderGroups(modelProviders, modelSearch);
+  const assistantName = activeSession?.character?.title ?? "智能助手";
+  const assistantAvatarUrl = activeSession?.character?.avatarUrl ?? activeSession?.avatarUrl ?? null;
   const lastUserMessageId = [...messages].reverse().find((message) => message.role === "user")?.id ?? null;
 
   useEffect(() => {
@@ -430,8 +433,11 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
       throw new Error("缺少消息内容");
     }
 
+    await ensureSessionModel();
+
     const assistantMessage = createStreamingAssistantMessage();
     let streamMessageId = assistantMessage.id;
+    let streamFinished = false;
 
     setMessages((current) =>
       options.appendUserMessage
@@ -439,49 +445,115 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
         : [...current, assistantMessage],
     );
 
-    for await (const event of api.chatStream.chat({
-      sessionId: activeSessionId,
-      userMessage: { content: userMessageContent },
-    })) {
-      if (event.type === "user_message") {
-        setMessages((current) => replaceLocalUserMessage(current, userMessage.id, event.message));
-      }
-      if (event.type === "create") {
-        setMessages((current) =>
-          applyAssistantCreateEvent(current, assistantMessage.id, {
-            messageId: event.messageId,
-            contentId: event.contentId,
-            turnsId: event.turnsId,
-            modelName: event.modelName,
-          }),
-        );
-        streamMessageId = event.messageId;
-      }
-      if (event.type === "think") {
-        setMessages((current) => appendAssistantReasoning(current, streamMessageId, event.reasoningContent));
-      }
-      if (event.type === "text") {
-        setMessages((current) => appendAssistantText(current, streamMessageId, event.content));
-      }
-      if (event.type === "tool_call") {
-        setMessages((current) => appendAssistantToolCalls(current, streamMessageId, event.toolCalls));
-      }
-      if (event.type === "tool_calls_response") {
-        setMessages((current) => appendAssistantToolResponses(current, streamMessageId, {
-          toolCallsResponse: event.toolCallsResponse,
-          displayMessages: "displayMessages" in event ? event.displayMessages : undefined,
-          usage: event.usage,
-        }));
-      }
-      if (event.type === "finish") {
-        setMessages((current) =>
-          finishAssistantMessage(current, streamMessageId, {
+    try {
+      for await (const event of api.chatStream.chat({
+        sessionId: activeSessionId,
+        userMessage: { content: userMessageContent },
+      })) {
+        if (event.type === "user_message") {
+          setMessages((current) => replaceLocalUserMessage(current, userMessage.id, event.message));
+        }
+        if (event.type === "create") {
+          setMessages((current) =>
+            applyAssistantCreateEvent(current, assistantMessage.id, {
+              messageId: event.messageId,
+              contentId: event.contentId,
+              turnsId: event.turnsId,
+              modelName: event.modelName,
+            }),
+          );
+          streamMessageId = event.messageId;
+        }
+        if (event.type === "think") {
+          setMessages((current) => appendAssistantReasoning(current, streamMessageId, event.reasoningContent));
+        }
+        if (event.type === "text") {
+          setMessages((current) => appendAssistantText(current, streamMessageId, event.content));
+        }
+        if (event.type === "tool_call") {
+          setMessages((current) => appendAssistantToolCalls(current, streamMessageId, event.toolCalls));
+        }
+        if (event.type === "tool_calls_response") {
+          setMessages((current) => appendAssistantToolResponses(current, streamMessageId, {
+            toolCallsResponse: event.toolCallsResponse,
+            displayMessages: "displayMessages" in event ? event.displayMessages : undefined,
             usage: event.usage,
-            finishReason: event.finishReason,
-            error: event.error,
-          }),
-        );
+          }));
+        }
+        if (event.type === "error") {
+          streamFinished = true;
+          setMessages((current) =>
+            finishAssistantMessage(current, streamMessageId, {
+              finishReason: "error",
+              error: event.error,
+            }),
+          );
+        }
+        if (event.type === "finish") {
+          streamFinished = true;
+          setMessages((current) =>
+            finishAssistantMessage(current, streamMessageId, {
+              usage: event.usage,
+              finishReason: event.finishReason,
+              error: event.error,
+            }),
+          );
+        }
       }
+    } catch (streamError) {
+      streamFinished = true;
+      setMessages((current) =>
+        finishAssistantMessage(current, streamMessageId, {
+          finishReason: "error",
+          error: getErrorMessage(streamError, "响应流读取失败"),
+        }),
+      );
+      throw streamError;
+    }
+
+    if (!streamFinished) {
+      setMessages((current) =>
+        finishAssistantMessage(current, streamMessageId, {
+          finishReason: "error",
+          error: "响应流已结束，但未收到完成事件",
+        }),
+      );
+    }
+  }
+
+  async function ensureSessionModel() {
+    if (!activeSessionId || !selectedModel?.id) return;
+    const currentModelId = activeSession?.modelId ?? activeSession?.model?.id ?? null;
+    if (currentModelId === selectedModel.id) return;
+
+    const updatedSession = await api.client.updateSession(activeSessionId, { modelId: selectedModel.id });
+    setActiveSession((current) => ({
+      ...(current ?? updatedSession),
+      ...updatedSession,
+      modelId: updatedSession.modelId ?? selectedModel.id,
+      model: updatedSession.model ?? selectedModel,
+    }));
+    setSelectedModelId(selectedModel.id);
+  }
+
+  async function selectModel(model: Model) {
+    setSelectedModelId(model.id);
+    setModelPanelOpen(false);
+
+    if (!activeSessionId) return;
+    const currentModelId = activeSession?.modelId ?? activeSession?.model?.id ?? null;
+    if (currentModelId === model.id) return;
+
+    try {
+      const updatedSession = await api.client.updateSession(activeSessionId, { modelId: model.id });
+      setActiveSession((current) => ({
+        ...(current ?? updatedSession),
+        ...updatedSession,
+        modelId: updatedSession.modelId ?? model.id,
+        model: updatedSession.model ?? model,
+      }));
+    } catch (updateError) {
+      setError(getErrorMessage(updateError, "模型切换失败"));
     }
   }
 
@@ -541,6 +613,8 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                   <ChatMessageItem
                     key={item.id}
                     message={item}
+                    assistantName={assistantName}
+                    assistantAvatarUrl={assistantAvatarUrl}
                     onFetchToolDetails={(contentId) => api.client.fetchMessageContentToolDetails(contentId)}
                     onSwitchVersion={(messageId, contentId) => {
                       void switchMessageVersion(messageId, contentId);
@@ -691,8 +765,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                                       model.id === selectedModel?.id ? "bg-pink-50" : "hover:bg-gray-50",
                                     )}
                                     onClick={() => {
-                                      setSelectedModelId(model.id);
-                                      setModelPanelOpen(false);
+                                      void selectModel(model);
                                     }}
                                   >
                                     <ModelAvatar providerName={provider.name} className="h-8 w-8" />
@@ -1151,6 +1224,12 @@ function applyStreamEvent(messages: Message[], messageId: string, event: StreamE
       toolCallsResponse: event.toolCallsResponse,
       displayMessages: "displayMessages" in event ? event.displayMessages : undefined,
       usage: event.usage,
+    });
+  }
+  if (event.type === "error") {
+    return finishAssistantMessage(messages, messageId, {
+      finishReason: "error",
+      error: event.error,
     });
   }
   if (event.type === "finish") {

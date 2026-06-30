@@ -115,6 +115,22 @@ describe("ChatMessageItem", () => {
     expect(screen.getByRole("button", { name: /重新生成/ })).toBeInTheDocument();
   });
 
+  it("renders the configured assistant avatar and name", () => {
+    render(
+      <ChatMessageItem
+        message={assistantMessage()}
+        assistantName="产品经理"
+        assistantAvatarUrl="/uploads/characters/product-manager.png"
+      />,
+    );
+
+    expect(screen.getByText("产品经理")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "产品经理头像" })).toHaveAttribute(
+      "src",
+      "/uploads/characters/product-manager.png",
+    );
+  });
+
   it("renders assistant rich answer sections", () => {
     const { container } = render(<ChatMessageItem message={assistantMessage()} />);
 

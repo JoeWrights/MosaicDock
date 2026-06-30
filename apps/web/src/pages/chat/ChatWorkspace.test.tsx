@@ -15,6 +15,14 @@ const baseApi = (): TestChatWorkspaceApi => ({
       id: "session-1",
       title: "默认会话",
       characterId: "character-1",
+      character: {
+        id: "character-1",
+        title: "智能助手",
+        avatarUrl: "/uploads/characters/assistant.png",
+        userId: "user-1",
+        type: "private" as const,
+        isActive: true,
+      },
       modelId: "model-1",
       userId: "user-1",
       settings: {},
@@ -95,6 +103,16 @@ const baseApi = (): TestChatWorkspaceApi => ({
     fetchMessageContentToolDetails: vi.fn(async () => ({ toolCalls: [], toolCallsResponse: [] })),
     updateMessageActiveContent: vi.fn(async () => ({ success: true })),
     updateMessage: vi.fn(async () => ({ success: true })),
+    updateSession: vi.fn(async (_sessionId, data) => ({
+      id: "session-1",
+      title: "默认会话",
+      characterId: "character-1",
+      modelId: data.modelId ?? "model-1",
+      userId: "user-1",
+      settings: {},
+      createdAt: "2026-06-27T09:00:00.000Z",
+      updatedAt: "2026-06-27T09:00:00.000Z",
+    })),
     deleteMessage: vi.fn(async () => ({ success: true })),
     fetchModels: vi.fn(async () => ({
       items: [
@@ -155,6 +173,10 @@ describe("ChatWorkspace", () => {
 
     expect(await screen.findByRole("heading", { name: "默认会话" })).toBeInTheDocument();
     expect(await screen.findByText("你好，我是 Mosaic Dock。")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "智能助手头像" })).toHaveAttribute(
+      "src",
+      "/uploads/characters/assistant.png",
+    );
     expect(screen.queryByRole("heading", { name: "会话" })).not.toBeInTheDocument();
     expect(api.client.fetchSession).toHaveBeenCalledWith("session-1");
     expect(api.client.fetchSessionMessages).toHaveBeenCalledWith("session-1", { limit: 50 });
@@ -242,6 +264,61 @@ describe("ChatWorkspace", () => {
     });
     expect(api.client.createMessage).not.toHaveBeenCalled();
     expect(await screen.findByText("这是新的 React 前端。")).toBeInTheDocument();
+  });
+
+  it("persists the fallback selected model before sending when the session has no model", async () => {
+    const api = baseApi();
+    api.client.fetchSession.mockImplementation(async () => ({
+      id: "session-1",
+      title: "默认会话",
+      characterId: "character-1",
+      modelId: null,
+      userId: "user-1",
+      settings: {},
+      createdAt: "2026-06-27T09:00:00.000Z",
+      updatedAt: "2026-06-27T09:00:00.000Z",
+    }));
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "今天星期几呀");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(api.client.updateSession).toHaveBeenCalledWith("session-1", { modelId: "model-1" }));
+    expect(api.chatStream.chat).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      userMessage: { content: "今天星期几呀" },
+    });
+  });
+
+  it("finishes the assistant placeholder when the stream emits an error event", async () => {
+    const api = baseApi();
+    api.chatStream.chat = vi.fn(async function* () {
+      yield { type: "error" as const, error: "模型调用失败" };
+    });
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "介绍一下项目");
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByText("模型调用失败")).toBeInTheDocument();
+    expect(screen.queryByText("正在生成回答...")).not.toBeInTheDocument();
+  });
+
+  it("finishes the assistant placeholder when the stream closes without a finish event", async () => {
+    const api = baseApi();
+    api.chatStream.chat = vi.fn(async function* () {
+      yield { type: "text" as const, content: "部分回复" };
+    });
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "介绍一下项目");
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByText("响应流已结束，但未收到完成事件")).toBeInTheDocument();
+    expect(screen.queryByText("正在生成回答...")).not.toBeInTheDocument();
   });
 
   it("fills the composer instead of sending when generating from a user message", async () => {
@@ -502,6 +579,7 @@ describe("ChatWorkspace", () => {
 
     await user.click(screen.getByRole("button", { name: /DeepSeek-R1/ }));
     expect(screen.getByRole("button", { name: /DeepSeek-R1/ })).toBeInTheDocument();
+    expect(api.client.updateSession).toHaveBeenCalledWith("session-1", { modelId: "model-2" });
     expect(screen.queryByPlaceholderText("搜索模型...")).not.toBeInTheDocument();
   });
 

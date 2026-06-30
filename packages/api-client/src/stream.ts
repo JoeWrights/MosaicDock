@@ -12,6 +12,7 @@ export type StreamEvent =
   | { type: "compression_error"; content: string }
   | { type: "sub_agent_start"; subSessionId: string; name: string }
   | { type: "sub_agent_finish"; subSessionId: string; status: "completed" | "error"; result?: string; error?: string }
+  | { type: "error"; error: string }
   | { type: "finish"; usage?: TokenUsage; finishReason: string; error?: string };
 
 export interface TokenUsage {

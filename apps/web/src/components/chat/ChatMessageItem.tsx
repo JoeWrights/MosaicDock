@@ -29,6 +29,8 @@ import {
 
 interface ChatMessageItemProps {
   message: Message;
+  assistantName?: string;
+  assistantAvatarUrl?: string | null;
   onFetchToolDetails?: (contentId: string) => Promise<{ toolCalls: unknown[]; toolCallsResponse: unknown[] }>;
   onSwitchVersion?: (messageId: string, contentId: string) => void;
   onRegenerate?: (message: Message) => void;
@@ -41,6 +43,8 @@ interface ChatMessageItemProps {
 
 export function ChatMessageItem({
   message,
+  assistantName = "智能助手",
+  assistantAvatarUrl,
   onFetchToolDetails,
   onSwitchVersion,
   onRegenerate,
@@ -85,12 +89,10 @@ export function ChatMessageItem({
 
   return (
     <article className="flex w-full gap-3">
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-950 text-white">
-        <Bot className="h-4 w-4" aria-hidden="true" />
-      </div>
+      <AssistantAvatar name={assistantName} avatarUrl={assistantAvatarUrl} />
       <div className="min-w-0 flex-1">
         <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">智能助手</span>
+          <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{assistantName}</span>
           <span>{modelName}</span>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-[#34363c] dark:bg-[#232428]">
@@ -131,6 +133,24 @@ export function ChatMessageItem({
         />
       </div>
     </article>
+  );
+}
+
+function AssistantAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) {
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={`${name}头像`}
+        className="h-8 w-8 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+
+  return (
+    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-950 text-white">
+      <Bot className="h-4 w-4" aria-hidden="true" />
+    </div>
   );
 }
 
