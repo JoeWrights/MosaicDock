@@ -100,6 +100,91 @@ describe("ChatMessageItem", () => {
     expect(container.querySelector(".markdown-text")).toBeNull();
   });
 
+  it("keeps a loading indicator at the bottom while an assistant message is still streaming", () => {
+    const streamingMessage = assistantMessage();
+    streamingMessage.state = { isStreaming: true };
+    streamingMessage.contents[0] = {
+      ...streamingMessage.contents[0]!,
+      content: "已经生成了一部分回答。",
+      state: { isStreaming: true },
+    };
+
+    const { rerender } = render(<ChatMessageItem message={streamingMessage} />);
+
+    expect(screen.getByText("已经生成了一部分回答。")).toBeInTheDocument();
+    expect(screen.getByText("回答中")).toBeInTheDocument();
+
+    rerender(<ChatMessageItem message={assistantMessage()} />);
+
+    expect(screen.queryByText("回答中")).not.toBeInTheDocument();
+  });
+
+  it("renders user message attachments", () => {
+    render(
+      <ChatMessageItem
+        message={{
+          ...userMessage(),
+          files: [
+            {
+              id: "file-image",
+              displayName: "截图.png",
+              fileName: "screenshot.png",
+              fileType: "image",
+              fileSize: 2048,
+              url: "/uploads/images/screenshot.jpg",
+              previewUrl: "/uploads/previews/screenshot.jpg",
+            },
+            {
+              id: "file-doc",
+              displayName: "需求.md",
+              fileName: "requirements.md",
+              fileType: "text",
+              fileExtension: "md",
+              fileSize: 1024,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "截图.png" })).toHaveAttribute("src", "/uploads/previews/screenshot.jpg");
+    expect(screen.getByText("需求.md")).toBeInTheDocument();
+    expect(screen.getByText("1 KB")).toBeInTheDocument();
+  });
+
+  it("opens a guada-style image preview when clicking message image attachments", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChatMessageItem
+        message={{
+          ...userMessage(),
+          files: [
+            {
+              id: "file-image",
+              displayName: "截图.png",
+              fileName: "screenshot.png",
+              fileType: "image",
+              fileSize: 2048,
+              url: "/uploads/images/screenshot.jpg",
+              previewUrl: "/uploads/previews/screenshot.jpg",
+            },
+          ],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "预览图片 截图.png" }));
+
+    const dialog = screen.getByRole("dialog", { name: "图片预览" });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "截图.png 预览" })).toHaveAttribute("src", "/uploads/images/screenshot.jpg");
+    expect(screen.getByRole("button", { name: "放大图片" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "顺时针旋转" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "关闭图片预览" }));
+    expect(screen.queryByRole("dialog", { name: "图片预览" })).not.toBeInTheDocument();
+  });
+
   it("renders backend messages that omit state fields", () => {
     const { state: _messageState, contents, ...messageWithoutState } = assistantMessage();
     const [{ state: _contentState, ...firstContentWithoutState }, ...restContents] = contents;

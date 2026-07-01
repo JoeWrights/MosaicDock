@@ -25,6 +25,7 @@ const baseApi = (): TestChatWorkspaceApi => ({
       },
       modelId: "model-1",
       userId: "user-1",
+      workspacePath: "/Users/joewright/workspace/WORK-2026-07-01-fu8Y",
       settings: {},
       createdAt: "2026-06-27T09:00:00.000Z",
       updatedAt: "2026-06-27T09:00:00.000Z",
@@ -100,7 +101,71 @@ const baseApi = (): TestChatWorkspaceApi => ({
       content: "# Mosaic Dock\n\n项目说明",
       mimeType: "text/markdown",
     })),
+    uploadSessionFile: vi.fn(async (_sessionId, file) => ({
+      id: "file-uploaded",
+      displayName: file.name,
+      fileName: file.name,
+      fileType: file.type.startsWith("image/") ? "image" : "text",
+      fileSize: file.size,
+      url: "/uploads/images/uploaded.jpg",
+      previewUrl: "/uploads/previews/uploaded.jpg",
+    })),
+    fetchKnowledgeBases: vi.fn(async () => ({
+      items: [
+        { id: "kb-product", name: "产品知识库", description: "产品说明和规划" },
+        { id: "kb-design", name: "设计知识库", description: "设计规范" },
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 20,
+    })),
+    fetchSkills: vi.fn(async () => ({
+      items: [
+        {
+          id: "skill-creator",
+          name: "skill-creator",
+          manifest: { name: "skill-creator", description: "Creating and authoring new AI skills" },
+        },
+        {
+          id: "frontend-design",
+          name: "frontend-design",
+          manifest: { name: "frontend-design", description: "Guidance for distinctive UI design" },
+        },
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 20,
+    })),
     fetchMessageContentToolDetails: vi.fn(async () => ({ toolCalls: [], toolCallsResponse: [] })),
+    fetchSessionTokenStats: vi.fn(async () => ({
+      usedTokens: 32000,
+      totalTokens: 128000,
+      remainingTokens: 96000,
+      percentage: 25,
+      modelName: "DeepSeek-V3.2",
+      messageCount: 8,
+    })),
+    fetchSessionSummaries: vi.fn(async () => [
+      {
+        id: "summary-1",
+        sessionId: "session-1",
+        summaryContent: "用户偏好：中文交流，回答简洁。",
+        compressionStats: {
+          beforeTokenCount: 42000,
+          afterTokenCount: 18000,
+          beforeMessageCount: 24,
+          afterMessageCount: 10,
+        },
+        cleaningStrategy: "summarized",
+        createdAt: "2026-06-29T15:20:00.000Z",
+      },
+    ]),
+    compressSession: vi.fn(async () => ({
+      success: true,
+      after: { compressionRatio: "57.14%" },
+    })),
+    updateSummary: vi.fn(async () => ({ success: true })),
+    deleteSummary: vi.fn(async () => ({ success: true })),
     updateMessageActiveContent: vi.fn(async () => ({ success: true })),
     updateMessage: vi.fn(async () => ({ success: true })),
     updateSession: vi.fn(async (_sessionId, data) => ({
@@ -128,6 +193,11 @@ const baseApi = (): TestChatWorkspaceApi => ({
               modelType: "text",
               providerId: "provider-1",
               isActive: true,
+              config: {
+                inputCapabilities: ["text"],
+                outputCapabilities: ["text"],
+                features: ["tools", "thinking"],
+              },
             },
             {
               id: "model-2",
@@ -135,6 +205,23 @@ const baseApi = (): TestChatWorkspaceApi => ({
               modelType: "text",
               providerId: "provider-1",
               isActive: true,
+              config: {
+                inputCapabilities: ["text"],
+                outputCapabilities: ["text"],
+                features: ["tools"],
+              },
+            },
+            {
+              id: "model-3",
+              modelName: "Qwen/Qwen3.5-397B-A17B",
+              modelType: "text",
+              providerId: "provider-1",
+              isActive: true,
+              config: {
+                inputCapabilities: ["text", "image"],
+                outputCapabilities: ["text"],
+                features: ["tools", "thinking"],
+              },
             },
           ],
         },
@@ -181,6 +268,55 @@ describe("ChatWorkspace", () => {
     expect(api.client.fetchSession).toHaveBeenCalledWith("session-1");
     expect(api.client.fetchSessionMessages).toHaveBeenCalledWith("session-1", { limit: 50 });
     expect(container.querySelector('[class*="ant-"]')).toBeNull();
+  });
+
+  it("shows a guada-style question outline and scrolls to a selected user question", async () => {
+    const api = baseApi();
+    api.client.fetchSessionMessages.mockResolvedValue({
+      items: [
+        {
+          id: "question-1",
+          role: "user" as const,
+          contents: [{ id: "content-q1", content: "什么是 Web Worker？", state: { isStreaming: false } }],
+          state: { isStreaming: false },
+        },
+        {
+          id: "answer-1",
+          role: "assistant" as const,
+          parentId: "question-1",
+          contents: [{ id: "content-a1", content: "Web Worker 是后台线程。", state: { isStreaming: false } }],
+          state: { isStreaming: false },
+        },
+        {
+          id: "question-2",
+          role: "user" as const,
+          contents: [{ id: "content-q2", content: "Web Worker 如何优化性能？", state: { isStreaming: false } }],
+          state: { isStreaming: false },
+        },
+      ],
+      total: 3,
+      page: 1,
+      pageSize: 20,
+    });
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const user = userEvent.setup();
+
+    try {
+      renderChat(api);
+
+      const outlineTrigger = await screen.findByRole("button", { name: "提问记录" });
+      await user.hover(outlineTrigger);
+
+      const outline = await screen.findByRole("navigation", { name: "提问记录" });
+      expect(within(outline).getByRole("button", { name: "什么是 Web Worker？" })).toBeInTheDocument();
+      await user.click(within(outline).getByRole("button", { name: "Web Worker 如何优化性能？" }));
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+    } finally {
+      Element.prototype.scrollIntoView = originalScrollIntoView;
+    }
   });
 
   it("does not show the new-session empty prompt for an empty team session", async () => {
@@ -253,17 +389,53 @@ describe("ChatWorkspace", () => {
     const user = userEvent.setup();
     renderChat(api);
 
-    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "介绍一下项目");
+    await user.type(await screen.findByRole("textbox", { name: "消息输入框" }), "project intro");
     await user.keyboard("{Enter}");
 
     await waitFor(() => {
       expect(api.chatStream.chat).toHaveBeenCalledWith({
         sessionId: "session-1",
-        userMessage: { content: "介绍一下项目" },
+        userMessage: { content: "project intro" },
       });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: "消息输入框" }).textContent).toBe("");
     });
     expect(api.client.createMessage).not.toHaveBeenCalled();
     expect(await screen.findByText("这是新的 React 前端。")).toBeInTheDocument();
+  });
+
+  it("shows a stop button while streaming and cancels generation", async () => {
+    const api = baseApi();
+    let finishStream: (() => void) | undefined;
+    api.chatStream.chat = vi.fn(async function* () {
+      yield {
+        type: "create" as const,
+        messageId: "assistant-streaming",
+        turnsId: "turn-streaming",
+        contentId: "content-streaming",
+        modelName: "DeepSeek-V3.2",
+      };
+      await new Promise<void>((resolve) => {
+        finishStream = resolve;
+      });
+      throw new Error("BodyStreamBuffer was aborted");
+    });
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.type(await screen.findByRole("textbox", { name: "消息输入框" }), "project intro");
+    await user.keyboard("{Enter}");
+
+    const stopButton = await screen.findByRole("button", { name: "停止生成" });
+    await user.click(stopButton);
+
+    expect(api.chatStream.cancelResponse).toHaveBeenCalledWith("session-1");
+    expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
+    finishStream?.();
+    await waitFor(() => {
+      expect(screen.queryByText("BodyStreamBuffer was aborted")).not.toBeInTheDocument();
+    });
   });
 
   it("persists the fallback selected model before sending when the session has no model", async () => {
@@ -281,13 +453,13 @@ describe("ChatWorkspace", () => {
     const user = userEvent.setup();
     renderChat(api);
 
-    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "今天星期几呀");
+    await user.type(await screen.findByRole("textbox", { name: "消息输入框" }), "weekday");
     await user.keyboard("{Enter}");
 
     await waitFor(() => expect(api.client.updateSession).toHaveBeenCalledWith("session-1", { modelId: "model-1" }));
     expect(api.chatStream.chat).toHaveBeenCalledWith({
       sessionId: "session-1",
-      userMessage: { content: "今天星期几呀" },
+      userMessage: { content: "weekday" },
     });
   });
 
@@ -299,7 +471,7 @@ describe("ChatWorkspace", () => {
     const user = userEvent.setup();
     renderChat(api);
 
-    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "介绍一下项目");
+    await user.type(await screen.findByRole("textbox", { name: "消息输入框" }), "project intro");
     await user.keyboard("{Enter}");
 
     expect(await screen.findByText("模型调用失败")).toBeInTheDocument();
@@ -314,7 +486,7 @@ describe("ChatWorkspace", () => {
     const user = userEvent.setup();
     renderChat(api);
 
-    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "介绍一下项目");
+    await user.type(await screen.findByRole("textbox", { name: "消息输入框" }), "project intro");
     await user.keyboard("{Enter}");
 
     expect(await screen.findByText("响应流已结束，但未收到完成事件")).toBeInTheDocument();
@@ -361,7 +533,7 @@ describe("ChatWorkspace", () => {
     await user.click(await screen.findByRole("button", { name: "继续生成" }));
 
     expect(screen.getByText("正在编辑消息")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("按 / 使用技能，Shift+Enter 换行")).toHaveValue("介绍一下项目");
+    expect(screen.getByRole("textbox", { name: "消息输入框" })).toHaveTextContent("介绍一下项目");
     expect(api.chatStream.chat).not.toHaveBeenCalled();
   });
 
@@ -375,7 +547,7 @@ describe("ChatWorkspace", () => {
     try {
       renderChat(api);
 
-      await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "继续介绍");
+      await user.type(await screen.findByRole("textbox", { name: "消息输入框" }), "continue");
       await user.keyboard("{Enter}");
 
       await waitFor(() => {
@@ -434,7 +606,7 @@ describe("ChatWorkspace", () => {
     const user = userEvent.setup();
     renderChat(api);
 
-    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "开始");
+    await user.type(await screen.findByRole("textbox", { name: "消息输入框" }), "start");
     await user.keyboard("{Enter}");
 
     expect(await screen.findByText("我先查看项目状态。")).toBeInTheDocument();
@@ -460,6 +632,108 @@ describe("ChatWorkspace", () => {
     expect(await screen.findByText(".guada")).toBeInTheDocument();
     expect(await screen.findByText("README.md")).toBeInTheDocument();
     expect(api.client.fetchWorkspaceTree).toHaveBeenCalledWith("session-1");
+  });
+
+  it("toggles the workspace panel from the guada-style composer toolbar", async () => {
+    const api = baseApi();
+    const user = userEvent.setup();
+    renderChat(api);
+
+    expect(await screen.findByRole("heading", { name: "工作目录" })).toBeInTheDocument();
+
+    const thinkingButton = screen.getByRole("button", { name: "不思考" });
+    const workspaceButton = screen.getByRole("button", { name: "WORK-2026-07-01-fu8Y" });
+    expect(thinkingButton.compareDocumentPosition(workspaceButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const composerShell = screen.getByTestId("chat-composer-shell");
+    const bottomToolbar = workspaceButton.parentElement;
+    expect(composerShell).not.toContainElement(bottomToolbar);
+    expect(composerShell.compareDocumentPosition(bottomToolbar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await user.click(workspaceButton);
+
+    expect(screen.queryByRole("heading", { name: "工作目录" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "展开工作目录" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "WORK-2026-07-01-fu8Y" }));
+
+    expect(screen.getByRole("heading", { name: "工作目录" })).toBeInTheDocument();
+  });
+
+  it("shows memory usage directly in the bottom memory entry", async () => {
+    const api = baseApi();
+    renderChat(api);
+
+    const memoryButton = await screen.findByRole("button", { name: "记忆管理，使用率 25%" });
+    const indicator = within(memoryButton).getByTestId("memory-usage-indicator");
+
+    expect(indicator).toBeInTheDocument();
+    expect(indicator.firstElementChild).toHaveClass("h-3");
+    expect(api.client.fetchSessionTokenStats).toHaveBeenCalledWith("session-1");
+  });
+
+  it("opens the guada-style memory management modal from the composer toolbar", async () => {
+    const api = baseApi();
+    let resolveCompression: (() => void) | undefined;
+    api.client.compressSession.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCompression = () => resolve({ success: true, after: { compressionRatio: "57.14%" } });
+        }),
+    );
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.click(await screen.findByRole("button", { name: "记忆管理，使用率 25%" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "记忆管理" });
+    expect(within(dialog).getByText("上下文使用率")).toBeInTheDocument();
+    expect(within(dialog).getByText("25%")).toBeInTheDocument();
+    expect(within(dialog).getByText("32,000")).toBeInTheDocument();
+    expect(within(dialog).getByText("8")).toBeInTheDocument();
+    expect(within(dialog).getByText("128,000")).toBeInTheDocument();
+    expect(within(dialog).getByText("用户偏好：中文交流，回答简洁。")).toBeInTheDocument();
+    expect(within(dialog).getByText("摘要压缩")).toBeInTheDocument();
+    expect(within(dialog).getByText("压缩率:")).toBeInTheDocument();
+    expect(within(dialog).getByText("57.14%")).toBeInTheDocument();
+    expect(within(dialog).getByText(/2026\/6\/29/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "历史" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "编辑" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "删除" })).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "历史" }));
+    const historyDialog = await screen.findByRole("dialog", { name: "压缩历史记录" });
+    expect(within(historyDialog).getByText("压缩率:")).toBeInTheDocument();
+    expect(within(historyDialog).getByText("57.14%")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "关闭历史记录" }));
+
+    await user.click(within(dialog).getByRole("button", { name: "编辑" }));
+    expect(await screen.findByRole("dialog", { name: "编辑摘要" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "取消" }));
+
+    await user.click(within(dialog).getByRole("button", { name: "删除" }));
+    expect(api.client.deleteSummary).toHaveBeenCalledWith("summary-1");
+
+    await user.click(within(dialog).getByRole("button", { name: "压缩" }));
+
+    const confirmDialog = await screen.findByRole("dialog", { name: "确认压缩" });
+    expect(within(confirmDialog).getByText(/确定要压缩当前会话的历史记录吗/)).toBeInTheDocument();
+    expect(api.client.compressSession).not.toHaveBeenCalled();
+
+    await user.click(within(confirmDialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog", { name: "确认压缩" })).not.toBeInTheDocument();
+    expect(api.client.compressSession).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole("button", { name: "压缩" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "确认压缩" })).getByRole("button", { name: "确认" }));
+
+    expect(api.client.compressSession).toHaveBeenCalledWith("session-1");
+    expect(within(dialog).getByRole("button", { name: /压缩中/ })).toBeDisabled();
+
+    resolveCompression?.();
+    await waitFor(() => {
+      expect(api.client.fetchSessionTokenStats.mock.calls.length).toBeGreaterThanOrEqual(4);
+      expect(api.client.fetchSessionSummaries.mock.calls.length).toBeGreaterThanOrEqual(3);
+    });
   });
 
   it("loads workspace children when expanding a directory", async () => {
@@ -575,7 +849,9 @@ describe("ChatWorkspace", () => {
     await user.click(await screen.findByRole("button", { name: /DeepSeek-V3\.2/ }));
     expect(screen.getByPlaceholderText("搜索模型...")).toBeInTheDocument();
     expect(screen.getByText("硅基流动")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /DeepSeek-R1/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("能力：文本输入到文本输出、工具、思考")).toBeInTheDocument();
+    expect(screen.getByLabelText("能力：文本输入到文本输出、工具")).toBeInTheDocument();
+    expect(screen.getByLabelText("能力：文本和图片输入到文本输出、工具、思考")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /DeepSeek-R1/ }));
     expect(screen.getByRole("button", { name: /DeepSeek-R1/ })).toBeInTheDocument();
@@ -631,6 +907,123 @@ describe("ChatWorkspace", () => {
     expect(screen.queryByText("图片")).not.toBeInTheDocument();
     expect(screen.queryByText("附件")).not.toBeInTheDocument();
     expect(screen.queryByText("搜索")).not.toBeInTheDocument();
+  });
+
+  it("uses guada-aligned upload accept filters", async () => {
+    const api = baseApi();
+    renderChat(api);
+
+    expect(await screen.findByLabelText("上传图片文件")).toHaveAttribute(
+      "accept",
+      expect.stringContaining(".jpg,.jpeg,.png"),
+    );
+    expect(screen.getByLabelText("上传附件文件")).toHaveAttribute(
+      "accept",
+      expect.stringContaining(".docx,.xlsx,.dts,.dtsi"),
+    );
+    expect(screen.getByLabelText("上传附件文件")).not.toHaveAttribute("accept", expect.stringContaining("image"));
+  });
+
+  it("selects knowledge bases from the guada-style composer panel and sends their ids", async () => {
+    const api = baseApi();
+    const user = userEvent.setup();
+    renderChat(api);
+
+    await user.click(await screen.findByRole("button", { name: "知识库" }));
+
+    expect(screen.getByPlaceholderText("搜索知识库...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /产品知识库/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /产品知识库/ }));
+
+    expect(screen.getByRole("button", { name: "移除知识库 产品知识库" })).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "消息输入框" }), "with knowledge base");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(api.chatStream.chat).toHaveBeenCalledWith({
+        sessionId: "session-1",
+        userMessage: { content: "with knowledge base", knowledgeBaseIds: ["kb-product"] },
+      });
+    });
+  });
+
+  it("selects skills with slash command and sends guada skill tags", async () => {
+    const api = baseApi();
+    const user = userEvent.setup();
+    renderChat(api);
+
+    const composer = await screen.findByRole("textbox", { name: "消息输入框" });
+    await user.type(composer, "/");
+
+    expect(screen.getByRole("listbox", { name: "技能选择" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /skill-creator/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("option", { name: /skill-creator/ }));
+
+    const skillBadge = within(composer).getByText("/skill-creator");
+    expect(skillBadge).toHaveAttribute("contenteditable", "false");
+
+    await user.type(composer, "create skill");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(api.chatStream.chat).toHaveBeenCalledWith({
+        sessionId: "session-1",
+        userMessage: { content: "<skill:skill-creator> create skill" },
+      });
+    });
+  });
+
+  it("uploads image attachments and sends their file ids with the chat stream", async () => {
+    const api = baseApi();
+    const user = userEvent.setup();
+    renderChat(api);
+
+    const image = new File(["image-bytes"], "截图.png", { type: "image/png" });
+    await user.upload(await screen.findByLabelText("上传图片文件"), image);
+
+    expect(api.client.uploadSessionFile).toHaveBeenCalledWith("session-1", image);
+    expect(await screen.findByRole("img", { name: "截图.png" })).toHaveAttribute("src", "/uploads/previews/uploaded.jpg");
+
+    await user.type(screen.getByRole("textbox", { name: "消息输入框" }), "analyze image");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(api.chatStream.chat).toHaveBeenCalledWith({
+        sessionId: "session-1",
+        userMessage: { content: "analyze image", files: ["file-uploaded"] },
+      });
+    });
+  });
+
+  it("clears composer attachment previews immediately after sending", async () => {
+    const api = baseApi();
+    api.chatStream.chat = vi.fn(async function* () {
+      yield {
+        type: "create" as const,
+        messageId: "assistant-streaming",
+        turnsId: "turn-streaming",
+        contentId: "content-streaming",
+        modelName: "DeepSeek-V3.2",
+      };
+      await new Promise<void>(() => undefined);
+    });
+    const user = userEvent.setup();
+    renderChat(api);
+
+    const image = new File(["image-bytes"], "截图.png", { type: "image/png" });
+    await user.upload(await screen.findByLabelText("上传图片文件"), image);
+    expect(await screen.findByRole("button", { name: "移除 截图.png" })).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "消息输入框" }), "analyze image");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(api.chatStream.chat).toHaveBeenCalled();
+    });
+    expect(screen.queryByRole("button", { name: "移除 截图.png" })).not.toBeInTheDocument();
   });
 
   it("shows tooltips for composer tool icons on hover", async () => {
@@ -763,7 +1156,7 @@ describe("ChatWorkspace", () => {
     const user = userEvent.setup();
     renderChat(api);
 
-    await user.type(await screen.findByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "现在几点？");
+    await user.type(await screen.findByRole("textbox", { name: "消息输入框" }), "what time");
     await user.keyboard("{Enter}");
     await user.click(await screen.findByRole("button", { name: /工具调用/ }));
 

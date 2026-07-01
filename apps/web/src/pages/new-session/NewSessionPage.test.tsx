@@ -13,8 +13,32 @@ function createApi(): NewSessionPageApi {
         { id: "group-1", name: "研发任务" },
         { id: "group-2", name: "客户项目" },
       ]),
-      fetchKnowledgeBases: vi.fn(async () => []),
-      fetchSkills: vi.fn(async () => []),
+      fetchKnowledgeBases: vi.fn(async () => ({
+        items: [
+          { id: "kb-product", name: "产品知识库", description: "产品说明和规划" },
+          { id: "kb-design", name: "设计知识库", description: "设计规范" },
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 20,
+      })),
+      fetchSkills: vi.fn(async () => ({
+        items: [
+          {
+            id: "skill-creator",
+            name: "skill-creator",
+            manifest: { name: "skill-creator", description: "Creating and authoring new AI skills" },
+          },
+          {
+            id: "frontend-design",
+            name: "frontend-design",
+            manifest: { name: "frontend-design", description: "Guidance for distinctive UI design" },
+          },
+        ],
+        total: 2,
+        page: 1,
+        pageSize: 20,
+      })),
       fetchAppearanceSettings: vi.fn(async () => ({})),
       fetchModels: vi.fn(async () => ({
         items: [
@@ -30,6 +54,11 @@ function createApi(): NewSessionPageApi {
                 modelType: "text",
                 providerId: "provider-1",
                 isActive: true,
+                config: {
+                  inputCapabilities: ["text"],
+                  outputCapabilities: ["text"],
+                  features: ["tools", "thinking"],
+                },
               },
               {
                 id: "model-2",
@@ -37,6 +66,23 @@ function createApi(): NewSessionPageApi {
                 modelType: "text",
                 providerId: "provider-1",
                 isActive: true,
+                config: {
+                  inputCapabilities: ["text"],
+                  outputCapabilities: ["text"],
+                  features: ["tools"],
+                },
+              },
+              {
+                id: "model-3",
+                modelName: "Qwen/Qwen3.5-397B-A17B",
+                modelType: "text",
+                providerId: "provider-1",
+                isActive: true,
+                config: {
+                  inputCapabilities: ["text", "image"],
+                  outputCapabilities: ["text"],
+                  features: ["tools", "thinking"],
+                },
               },
             ],
           },
@@ -59,6 +105,15 @@ function createApi(): NewSessionPageApi {
       })),
       fetchTeams: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 20 })),
       fetchSessions: vi.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 10 })),
+      uploadSessionFile: vi.fn(async (_sessionId, file) => ({
+        id: "file-uploaded",
+        displayName: file.name,
+        fileName: file.name,
+        fileType: file.type.startsWith("image/") ? "image" : "text",
+        fileSize: file.size,
+        url: "/uploads/images/uploaded.jpg",
+        previewUrl: "/uploads/previews/uploaded.jpg",
+      })),
       createSession: vi.fn(async () => ({
         id: "session-new",
         title: "现在几点了？",
@@ -94,13 +149,25 @@ function renderNewSession(api: NewSessionPageApi = createApi()) {
 
 function LocationStateProbe() {
   const location = useLocation();
-  const state = location.state as { pendingUserMessage?: { contents?: { content: string | null }[] } } | null;
+  const state = location.state as {
+    pendingUserMessage?: {
+      contents?: { content: string | null }[];
+      files?: { id?: string; displayName?: string }[];
+    };
+    pendingKnowledgeBaseIds?: string[];
+  } | null;
 
   return (
     <div>
       <span data-testid="location-path">{location.pathname}</span>
       <span data-testid="pending-message-content">
         {state?.pendingUserMessage?.contents?.[0]?.content ?? ""}
+      </span>
+      <span data-testid="pending-message-file-name">
+        {state?.pendingUserMessage?.files?.[0]?.displayName ?? ""}
+      </span>
+      <span data-testid="pending-knowledge-base-ids">
+        {state?.pendingKnowledgeBaseIds?.join(",") ?? ""}
       </span>
     </div>
   );
@@ -118,7 +185,7 @@ describe("NewSessionPage", () => {
     expect(screen.getByText("新建对话")).toBeInTheDocument();
     expect(screen.getByTestId("new-session-greeting")).toBeInTheDocument();
     expect(screen.getByText("智能助手")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("按 / 使用技能，Shift+Enter 换行")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "消息输入框" })).toBeInTheDocument();
     expect(container.querySelector('[class*="ant-"]')).toBeNull();
   });
 
@@ -140,7 +207,7 @@ describe("NewSessionPage", () => {
     renderNewSession(api);
 
     const card = screen.getByTestId("new-session-input-card");
-    const input = screen.getByPlaceholderText("按 / 使用技能，Shift+Enter 换行");
+    const input = screen.getByRole("textbox", { name: "消息输入框" });
 
     expect(card.className).toContain("shadow-[0_2px_12px_rgba(0,0,0,0.08)]");
     expect(card.className).toContain("focus-within:shadow-[0_2px_22px_rgba(0,0,0,0.11)]");
@@ -227,12 +294,96 @@ describe("NewSessionPage", () => {
 
     expect(screen.getByPlaceholderText("搜索模型...")).toBeInTheDocument();
     expect(screen.getByText("硅基流动")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /DeepSeek-R1/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("能力：文本输入到文本输出、工具、思考")).toBeInTheDocument();
+    expect(screen.getByLabelText("能力：文本输入到文本输出、工具")).toBeInTheDocument();
+    expect(screen.getByLabelText("能力：文本和图片输入到文本输出、工具、思考")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /DeepSeek-R1/ }));
 
     expect(screen.getByRole("button", { name: /DeepSeek-R1/ })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("搜索模型...")).not.toBeInTheDocument();
+  });
+
+  it("uploads attachments after creating the new session and passes them to the pending message", async () => {
+    const api = createApi();
+    const user = userEvent.setup();
+    renderNewSession(api);
+
+    const image = new File(["image-bytes"], "截图.png", { type: "image/png" });
+    await user.upload(await screen.findByLabelText("上传图片文件"), image);
+
+    expect(api.client.uploadSessionFile).not.toHaveBeenCalled();
+    expect(await screen.findByRole("img", { name: "截图.png" })).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "消息输入框" }), "analyze image");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(api.client.createSession).toHaveBeenCalledWith(expect.objectContaining({ title: "analyze image" }));
+      expect(api.client.uploadSessionFile).toHaveBeenCalledWith("session-new", image);
+    });
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/chat/session-new");
+    expect(screen.getByTestId("pending-message-content")).toHaveTextContent("analyze image");
+    expect(screen.getByTestId("pending-message-file-name")).toHaveTextContent("截图.png");
+  });
+
+  it("uses guada-aligned upload accept filters", async () => {
+    const api = createApi();
+    renderNewSession(api);
+
+    expect(await screen.findByLabelText("上传图片文件")).toHaveAttribute(
+      "accept",
+      expect.stringContaining(".jpg,.jpeg,.png"),
+    );
+    expect(screen.getByLabelText("上传附件文件")).toHaveAttribute(
+      "accept",
+      expect.stringContaining(".docx,.xlsx,.dts,.dtsi"),
+    );
+    expect(screen.getByLabelText("上传附件文件")).not.toHaveAttribute("accept", expect.stringContaining("image"));
+  });
+
+  it("selects knowledge bases from the guada-style composer panel and passes them to chat", async () => {
+    const api = createApi();
+    const user = userEvent.setup();
+    renderNewSession(api);
+
+    await user.click(await screen.findByRole("button", { name: "知识库" }));
+
+    expect(screen.getByPlaceholderText("搜索知识库...")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /产品知识库/ }));
+
+    expect(screen.getByRole("button", { name: "移除知识库 产品知识库" })).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox", { name: "消息输入框" }), "with knowledge base");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(api.client.createSession).toHaveBeenCalledWith(expect.objectContaining({ title: "with knowledge base" }));
+    });
+    expect(screen.getByTestId("pending-knowledge-base-ids")).toHaveTextContent("kb-product");
+  });
+
+  it("selects skills with slash command and passes guada skill tags to chat", async () => {
+    const api = createApi();
+    const user = userEvent.setup();
+    renderNewSession(api);
+
+    const composer = screen.getByRole("textbox", { name: "消息输入框" });
+    await user.type(composer, "/");
+
+    expect(screen.getByRole("listbox", { name: "技能选择" })).toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: /skill-creator/ }));
+
+    const skillBadge = within(composer).getByText("/skill-creator");
+    expect(skillBadge).toHaveAttribute("contenteditable", "false");
+
+    await user.type(composer, "create skill");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(api.client.createSession).toHaveBeenCalledWith(expect.objectContaining({ title: "<skill:skill-creator> create skill" }));
+    });
+    expect(screen.getByTestId("pending-message-content")).toHaveTextContent("<skill:skill-creator> create skill");
   });
 
   it("shortens prefixed model names only in the selected model button", async () => {
@@ -324,19 +475,19 @@ describe("NewSessionPage", () => {
     const user = userEvent.setup();
     renderNewSession(api);
 
-    await user.type(screen.getByPlaceholderText("按 / 使用技能，Shift+Enter 换行"), "现在几点了？");
+    await user.type(screen.getByRole("textbox", { name: "消息输入框" }), "what time");
     await user.click(screen.getByRole("button", { name: "发送消息" }));
 
     await waitFor(() => {
       expect(api.client.createSession).toHaveBeenCalledWith({
         characterId: "character-1",
         modelId: "model-1",
-        title: "现在几点了？",
+        title: "what time",
         settings: { thinkingEffort: "off" },
       });
     });
     expect(await screen.findByTestId("location-path")).toHaveTextContent("/chat/session-new");
-    expect(screen.getByTestId("pending-message-content")).toHaveTextContent("现在几点了？");
+    expect(screen.getByTestId("pending-message-content")).toHaveTextContent("what time");
   });
 
   it("opens workspace settings, validates absolute paths, and updates the display", async () => {

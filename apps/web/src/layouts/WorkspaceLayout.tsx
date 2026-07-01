@@ -115,6 +115,7 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
     if (location.pathname.startsWith(RoutePath.PLUGINS)) return "plugins";
     if (location.pathname.startsWith(RoutePath.SCHEDULER)) return "scheduler";
     if (location.pathname.startsWith(RoutePath.MODELS)) return "models";
+    if (location.pathname.startsWith(RoutePath.SETTING)) return "setting";
     return "";
   }, [location.pathname]);
   const isChatWorkspaceRoute = activeKey === "chat";
@@ -418,7 +419,14 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
               )}
               {isDark ? "亮色" : "暗色"}
             </button>
-            <button type="button" className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-[#2a2c30]">
+            <button
+              type="button"
+              className={cn(
+                "inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-[#2a2c30]",
+                activeKey === "setting" && "bg-slate-100 text-foreground dark:bg-[#2a2c30] dark:text-[#e8e9ed]",
+              )}
+              onClick={() => handleNavigate(RoutePath.SETTING_GENERAL)}
+            >
               <Settings className="h-4 w-4" aria-hidden="true" />
               设置
             </button>

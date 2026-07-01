@@ -9,11 +9,21 @@ export interface MessageState {
 
 export interface FileAttachment {
   id?: string;
-  name: string;
+  name?: string;
+  fileName?: string;
+  displayName?: string;
   url?: string;
+  previewUrl?: string | null;
   type?: string;
+  fileType?: string;
+  fileExtension?: string;
   size?: number;
+  fileSize?: number;
   file?: File;
+  content?: string | null;
+  fileMetadata?: Record<string, unknown> | null;
+  createdAt?: ISODateString;
+  updatedAt?: ISODateString;
   [key: string]: unknown;
 }
 

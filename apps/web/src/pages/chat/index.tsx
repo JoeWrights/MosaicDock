@@ -1,21 +1,30 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import {
+  AlertTriangle,
   Bot,
   ChevronDown,
   ChevronRight,
+  Database,
   FileText,
   FileImage,
   Folder,
   Lightbulb,
+  Loader2,
   PanelLeft,
   Paperclip,
   RefreshCw,
   Search,
   Send,
   Settings,
+  Square,
   Star,
-  Type,
   X,
 } from "lucide-react";
 import { useLocation, useParams } from "react-router-dom";
@@ -23,15 +32,32 @@ import {
   mosaicApi,
   type ApiClient,
   type ChatStreamService,
+  type CompressSessionResponse,
+  type SessionSummary,
+  type SessionTokenStats,
   type StreamEvent,
   type WorkspaceFileResponse,
   type WorkspaceTreeNode,
 } from "@mosaic-dock/api-client";
-import type { Message, Model, ModelProvider, PaginatedResponse, Session } from "@mosaic-dock/shared";
+import type {
+  FileAttachment,
+  KnowledgeBase,
+  Message,
+  Model,
+  ModelProvider,
+  PaginatedResponse,
+  Session,
+} from "@mosaic-dock/shared";
 import { Button } from "../../components/ui/button";
 import { ChatMessageItem } from "../../components/chat/ChatMessageItem";
+import { ComposerAttachments, type ComposerAttachment } from "../../components/chat/attachments";
+import { ComposerEditor } from "../../components/chat/ComposerEditor";
+import { KnowledgeBasePickerPanel, SelectedKnowledgeBaseTags } from "../../components/chat/KnowledgeBasePicker";
 import { MarkdownContent } from "../../components/chat/MarkdownContent";
 import { getLanguageFromFileName, highlightCode } from "../../components/chat/code-highlight";
+import { GUADA_IMAGE_FILE_ACCEPT, GUADA_TEXT_FILE_ACCEPT } from "../../components/chat/upload-accept";
+import { normalizeSkills, type SkillOption } from "../../components/chat/SkillPicker";
+import { ModelCapabilityIcons } from "../../components/models/ModelCapabilityIcons";
 import { EmptyState } from "../../components/ui/empty-state";
 import { Spinner } from "../../components/ui/spinner";
 import { Textarea } from "../../components/ui/textarea";
@@ -51,13 +77,22 @@ export interface ChatWorkspaceApi {
     | "fetchWorkspaceChildren"
     | "fetchWorkspaceFile"
     | "fetchModels"
+    | "fetchKnowledgeBases"
+    | "fetchSkills"
     | "updateSession"
+    | "uploadSessionFile"
+    | "fetchSessionTokenStats"
+    | "fetchSessionSummaries"
+    | "compressSession"
+    | "updateSummary"
+    | "deleteSummary"
   >;
   chatStream: Pick<ChatStreamService, "chat" | "cancelResponse">;
 }
 
 interface ChatRouteState {
   pendingUserMessage?: Message;
+  pendingKnowledgeBaseIds?: string[];
 }
 
 interface ChatWorkspaceProps {
@@ -91,6 +126,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
+  const [composerResetKey, setComposerResetKey] = useState(0);
   const [loadingSession, setLoadingSession] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [streaming, setStreaming] = useState(false);
@@ -113,13 +149,33 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const [modelSearch, setModelSearch] = useState("");
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>("off");
   const [thinkingPanelOpen, setThinkingPanelOpen] = useState(false);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [knowledgeBasePanelOpen, setKnowledgeBasePanelOpen] = useState(false);
+  const [skills, setSkills] = useState<SkillOption[]>([]);
+  const [memoryPanelOpen, setMemoryPanelOpen] = useState(false);
+  const [memoryTokenStats, setMemoryTokenStats] = useState<SessionTokenStats | null>(null);
+  const [memorySummaries, setMemorySummaries] = useState<SessionSummary[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memoryError, setMemoryError] = useState<string | null>(null);
+  const [memoryCompressing, setMemoryCompressing] = useState(false);
+  const [editingSummary, setEditingSummary] = useState<SessionSummary | null>(null);
+  const [summaryDraft, setSummaryDraft] = useState("");
   const modelSelectorRef = useRef<HTMLDivElement>(null);
   const thinkingSelectorRef = useRef<HTMLDivElement>(null);
+  const knowledgeBaseSelectorRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const workspaceResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const location = useLocation();
   const pendingUserMessageRef = useRef(getPendingUserMessage(location.state));
+  const pendingKnowledgeBaseIdsRef = useRef(getPendingKnowledgeBaseIds(location.state));
   const consumedPendingMessageIdRef = useRef<string | null>(null);
+  const stopRequestedRef = useRef(false);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [selectedKnowledgeBaseIds, setSelectedKnowledgeBaseIds] = useState<string[]>(
+    () => pendingKnowledgeBaseIdsRef.current,
+  );
 
   const activeSessionId = sessionId && sessionId !== "new-session" ? sessionId : null;
   const models = flattenModels(modelProviders);
@@ -132,7 +188,11 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   const filteredProviderGroups = filterProviderGroups(modelProviders, modelSearch);
   const assistantName = activeSession?.character?.title ?? "智能助手";
   const assistantAvatarUrl = activeSession?.character?.avatarUrl ?? activeSession?.avatarUrl ?? null;
+  const workspaceDisplayName = getWorkspaceDisplayName(activeSession?.workspacePath);
   const lastUserMessageId = [...messages].reverse().find((message) => message.role === "user")?.id ?? null;
+  const questionOutlineItems = messages
+    .filter((message) => message.role === "user")
+    .map((message) => ({ id: message.id, title: getQuestionOutlineTitle(message) }));
 
   useEffect(() => {
     let cancelled = false;
@@ -191,6 +251,50 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   }, [api]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadSkills() {
+      try {
+        const response = await api.client.fetchSkills();
+        if (!cancelled) {
+          setSkills(normalizeSkills(response));
+        }
+      } catch {
+        if (!cancelled) {
+          setSkills([]);
+        }
+      }
+    }
+
+    void loadSkills();
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadKnowledgeBases() {
+      try {
+        const response = await api.client.fetchKnowledgeBases();
+        if (!cancelled) {
+          setKnowledgeBases(normalizeKnowledgeBases(response));
+        }
+      } catch {
+        if (!cancelled) {
+          setKnowledgeBases([]);
+        }
+      }
+    }
+
+    void loadKnowledgeBases();
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  useEffect(() => {
     if (!modelPanelOpen) return;
 
     function handlePointerDown(event: PointerEvent) {
@@ -221,9 +325,52 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
   }, [thinkingPanelOpen]);
 
   useEffect(() => {
+    if (!knowledgeBasePanelOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!knowledgeBaseSelectorRef.current?.contains(target)) {
+        setKnowledgeBasePanelOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [knowledgeBasePanelOpen]);
+
+  useEffect(() => {
     if (messages.length === 0 || loadingMessages) return;
     messagesEndRef.current?.scrollIntoView?.({ block: "end", behavior: "smooth" });
   }, [messages, loadingMessages]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMemoryUsage() {
+      if (!activeSessionId) {
+        setMemoryTokenStats(null);
+        return;
+      }
+
+      try {
+        const tokenStats = await api.client.fetchSessionTokenStats(activeSessionId);
+        if (!cancelled) {
+          setMemoryTokenStats(tokenStats);
+        }
+      } catch {
+        if (!cancelled) {
+          setMemoryTokenStats(null);
+        }
+      }
+    }
+
+    void loadMemoryUsage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, api]);
 
   useEffect(() => {
     if (!activeSessionId) {
@@ -275,7 +422,10 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
 
     void (async () => {
       try {
-        await streamAssistantResponse(pendingUserMessage, { appendUserMessage: false });
+        await streamAssistantResponse(pendingUserMessage, {
+          appendUserMessage: false,
+          knowledgeBaseIds: pendingKnowledgeBaseIdsRef.current,
+        });
         clearPendingRouteState();
       } catch (error) {
         setError(getErrorMessage(error, "消息发送失败"));
@@ -338,6 +488,70 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
       setWorkspaceError(getErrorMessage(error, "工作目录加载失败"));
     } finally {
       setLoadingWorkspace(false);
+    }
+  }
+
+  async function loadMemoryPanelData() {
+    if (!activeSessionId) return;
+    setMemoryLoading(true);
+    setMemoryError(null);
+    try {
+      const [tokenStats, summaries] = await Promise.all([
+        api.client.fetchSessionTokenStats(activeSessionId),
+        api.client.fetchSessionSummaries(activeSessionId),
+      ]);
+      setMemoryTokenStats(tokenStats);
+      setMemorySummaries(summaries);
+    } catch (error) {
+      setMemoryError(getErrorMessage(error, "记忆数据加载失败"));
+    } finally {
+      setMemoryLoading(false);
+    }
+  }
+
+  async function openMemoryPanel() {
+    setMemoryPanelOpen(true);
+    await loadMemoryPanelData();
+  }
+
+  async function compressCurrentSessionMemory() {
+    if (!activeSessionId || streaming) return;
+    setMemoryCompressing(true);
+    setMemoryError(null);
+    try {
+      await api.client.compressSession(activeSessionId);
+      await loadMemoryPanelData();
+    } catch (error) {
+      setMemoryError(getErrorMessage(error, "压缩失败"));
+    } finally {
+      setMemoryCompressing(false);
+    }
+  }
+
+  function startEditSummary(summary: SessionSummary) {
+    setEditingSummary(summary);
+    setSummaryDraft(summary.summaryContent ?? "");
+  }
+
+  async function saveSummaryEdit() {
+    if (!editingSummary) return;
+    setMemoryError(null);
+    try {
+      await api.client.updateSummary(editingSummary.id, { summaryContent: summaryDraft });
+      setEditingSummary(null);
+      await loadMemoryPanelData();
+    } catch (error) {
+      setMemoryError(getErrorMessage(error, "更新摘要失败"));
+    }
+  }
+
+  async function deleteMemorySummary(summary: SessionSummary) {
+    setMemoryError(null);
+    try {
+      await api.client.deleteSummary(summary.id);
+      await loadMemoryPanelData();
+    } catch (error) {
+      setMemoryError(getErrorMessage(error, "删除摘要失败"));
     }
   }
 
@@ -424,11 +638,13 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
 
   async function streamAssistantResponse(
     userMessage: Message,
-    options: { appendUserMessage: boolean },
+    options: { appendUserMessage: boolean; knowledgeBaseIds?: string[] },
   ) {
     if (!activeSessionId) return;
 
     const userMessageContent = getMessageText(userMessage);
+    const userMessageFiles = getMessageFileIds(userMessage);
+    const userMessageKnowledgeBaseIds = options.knowledgeBaseIds ?? [];
     if (!userMessageContent) {
       throw new Error("缺少消息内容");
     }
@@ -448,7 +664,11 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
     try {
       for await (const event of api.chatStream.chat({
         sessionId: activeSessionId,
-        userMessage: { content: userMessageContent },
+        userMessage: {
+          content: userMessageContent,
+          ...(userMessageFiles.length > 0 ? { files: userMessageFiles } : {}),
+          ...(userMessageKnowledgeBaseIds.length > 0 ? { knowledgeBaseIds: userMessageKnowledgeBaseIds } : {}),
+        },
       })) {
         if (event.type === "user_message") {
           setMessages((current) => replaceLocalUserMessage(current, userMessage.id, event.message));
@@ -491,6 +711,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
         }
         if (event.type === "finish") {
           streamFinished = true;
+          stopRequestedRef.current = false;
           setMessages((current) =>
             finishAssistantMessage(current, streamMessageId, {
               usage: event.usage,
@@ -502,6 +723,15 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
       }
     } catch (streamError) {
       streamFinished = true;
+      if (stopRequestedRef.current) {
+        stopRequestedRef.current = false;
+        setMessages((current) =>
+          finishAssistantMessage(current, streamMessageId, {
+            finishReason: "stop",
+          }),
+        );
+        return;
+      }
       setMessages((current) =>
         finishAssistantMessage(current, streamMessageId, {
           finishReason: "error",
@@ -512,6 +742,15 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
     }
 
     if (!streamFinished) {
+      if (stopRequestedRef.current) {
+        stopRequestedRef.current = false;
+        setMessages((current) =>
+          finishAssistantMessage(current, streamMessageId, {
+            finishReason: "stop",
+          }),
+        );
+        return;
+      }
       setMessages((current) =>
         finishAssistantMessage(current, streamMessageId, {
           finishReason: "error",
@@ -557,22 +796,85 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
     }
   }
 
-  async function sendMessage() {
-    const content = draft.trim();
+  async function sendMessage(nextContent = draft) {
+    const content = nextContent.trim();
     if (!content || !activeSessionId || streaming) return;
+    if (attachments.some((attachment) => attachment.status === "uploading")) return;
+    if (attachments.some((attachment) => attachment.status === "error")) {
+      setError("请移除上传失败的附件后再发送");
+      return;
+    }
 
     setDraft("");
+    setComposerResetKey((current) => current + 1);
     setStreaming(true);
 
     try {
       setError(null);
-      const userMessage = createLocalUserMessage(content);
-      await streamAssistantResponse(userMessage, { appendUserMessage: true });
+      const uploadedFiles = attachments
+        .map((attachment) => attachment.uploaded)
+        .filter((file): file is FileAttachment => Boolean(file?.id));
+      const userMessage = createLocalUserMessage(content, uploadedFiles);
+      setAttachments([]);
+      await streamAssistantResponse(userMessage, {
+        appendUserMessage: true,
+        knowledgeBaseIds: selectedKnowledgeBaseIds,
+      });
     } catch (error) {
       setError(getErrorMessage(error, "消息发送失败"));
     } finally {
       setStreaming(false);
     }
+  }
+
+  async function stopGeneration() {
+    if (!activeSessionId || !streaming) return;
+    stopRequestedRef.current = true;
+    try {
+      await api.chatStream.cancelResponse(activeSessionId);
+    } catch (cancelError) {
+      stopRequestedRef.current = false;
+      setError(getErrorMessage(cancelError, "停止生成失败"));
+    } finally {
+      setStreaming(false);
+    }
+  }
+
+  function scrollToMessage(messageId: string) {
+    const target = document.querySelector(`[data-message-id="${escapeDataAttributeValue(messageId)}"]`);
+    target?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }
+
+  async function uploadSelectedFiles(event: ChangeEvent<HTMLInputElement>) {
+    const selectedFiles = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = "";
+    if (selectedFiles.length === 0 || !activeSessionId) return;
+
+    for (const file of selectedFiles) {
+      const attachment = createComposerAttachment(file);
+      setAttachments((current) => [...current, attachment]);
+
+      try {
+        const uploaded = await api.client.uploadSessionFile(activeSessionId, file);
+        setAttachments((current) =>
+          current.map((item) =>
+            item.id === attachment.id ? { ...item, status: "uploaded", uploaded } : item,
+          ),
+        );
+      } catch (uploadError) {
+        setAttachments((current) =>
+          current.map((item) =>
+            item.id === attachment.id
+              ? { ...item, status: "error", error: getErrorMessage(uploadError, "附件上传失败") }
+              : item,
+          ),
+        );
+      }
+    }
+  }
+
+  function removeAttachment(attachmentId: string) {
+    setAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
   }
 
   return (
@@ -601,7 +903,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
           </div>
         ) : null}
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-[#1e1f23]">
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-white dark:bg-[#1e1f23]">
           <div className="min-h-0 flex-1 overflow-auto px-6 py-8">
             {loadingMessages ? (
               <Spinner />
@@ -610,40 +912,48 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
             ) : (
               <div className="mx-auto flex w-full max-w-[760px] flex-col gap-6">
                 {messages.map((item) => (
-                  <ChatMessageItem
-                    key={item.id}
-                    message={item}
-                    assistantName={assistantName}
-                    assistantAvatarUrl={assistantAvatarUrl}
-                    onFetchToolDetails={(contentId) => api.client.fetchMessageContentToolDetails(contentId)}
-                    onSwitchVersion={(messageId, contentId) => {
-                      void switchMessageVersion(messageId, contentId);
-                    }}
-                    onRegenerate={(message) => {
-                      void regenerateMessage(message);
-                    }}
-                    onGenerate={(message) => {
-                      void generateResponseFromUserMessage(message);
-                    }}
-                    onEdit={(message) => {
-                      openEditDialog(message);
-                    }}
-                    onDelete={(message) => {
-                      setDeletingMessage(message);
-                    }}
-                    onContinue={(message) => {
-                      void continueMessage(message);
-                    }}
-                    allowGenerate={!streaming && item.role === "user" && item.id === lastUserMessageId}
-                  />
+                  <div key={item.id} data-message-id={item.id}>
+                    <ChatMessageItem
+                      message={item}
+                      assistantName={assistantName}
+                      assistantAvatarUrl={assistantAvatarUrl}
+                      onFetchToolDetails={(contentId) => api.client.fetchMessageContentToolDetails(contentId)}
+                      onSwitchVersion={(messageId, contentId) => {
+                        void switchMessageVersion(messageId, contentId);
+                      }}
+                      onRegenerate={(message) => {
+                        void regenerateMessage(message);
+                      }}
+                      onGenerate={(message) => {
+                        void generateResponseFromUserMessage(message);
+                      }}
+                      onEdit={(message) => {
+                        openEditDialog(message);
+                      }}
+                      onDelete={(message) => {
+                        setDeletingMessage(message);
+                      }}
+                      onContinue={(message) => {
+                        void continueMessage(message);
+                      }}
+                      allowGenerate={!streaming && item.role === "user" && item.id === lastUserMessageId}
+                    />
+                  </div>
                 ))}
                 <div ref={messagesEndRef} aria-hidden="true" />
               </div>
             )}
           </div>
+          <QuestionOutline
+            items={questionOutlineItems}
+            onSelect={(messageId) => scrollToMessage(messageId)}
+          />
 
           <footer className="bg-white px-6 pb-6 pt-3 dark:bg-[#1e1f23]">
-            <div className="mx-auto max-w-[760px] rounded-[22px] border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] dark:border-[#34363c] dark:bg-[#232428] dark:shadow-none">
+            <div
+              data-testid="chat-composer-shell"
+              className="mx-auto max-w-[760px] rounded-[22px] border border-slate-200 bg-white p-3 shadow-[0_12px_30px_rgba(15,23,42,0.08)] dark:border-[#34363c] dark:bg-[#232428] dark:shadow-none"
+            >
               {composerEditingMessage ? (
                 <div className="-mx-3 -mt-3 mb-3 flex items-center rounded-t-[22px] bg-slate-100 px-4 py-2 text-sm text-slate-600 dark:bg-[#2a2c30] dark:text-slate-300">
                   <span className="flex-1">正在编辑消息</span>
@@ -661,22 +971,40 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                   </Button>
                 </div>
               ) : null}
-              <Textarea
+              <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
+              <SelectedKnowledgeBaseTags
+                knowledgeBases={knowledgeBases}
+                selectedIds={selectedKnowledgeBaseIds}
+                onRemove={(knowledgeBaseId) =>
+                  setSelectedKnowledgeBaseIds((current) => current.filter((id) => id !== knowledgeBaseId))
+                }
+              />
+              <ComposerEditor
                 value={draft}
+                onChange={setDraft}
+                onSubmit={(content) => void sendMessage(content)}
+                resetKey={composerResetKey}
                 disabled={!activeSessionId || streaming}
-                placeholder="按 / 使用技能，Shift+Enter 换行"
-                rows={2}
-                className="min-h-14 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void sendMessage();
-                  }
-                }}
+                skills={skills}
               />
               <div className="mt-2 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 text-muted-foreground">
+                  <input
+                    ref={imageInputRef}
+                    aria-label="上传图片文件"
+                    type="file"
+                    accept={GUADA_IMAGE_FILE_ACCEPT}
+                    className="sr-only"
+                    onChange={(event) => void uploadSelectedFiles(event)}
+                  />
+                  <input
+                    ref={fileInputRef}
+                    aria-label="上传附件文件"
+                    type="file"
+                    accept={GUADA_TEXT_FILE_ACCEPT}
+                    className="sr-only"
+                    onChange={(event) => void uploadSelectedFiles(event)}
+                  />
                   <div className="relative" ref={thinkingSelectorRef}>
                     <button
                       type="button"
@@ -717,15 +1045,32 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                       </div>
                     ) : null}
                   </div>
-                  <ComposerToolButton label="添加图片">
+                  <ComposerToolButton label="添加图片" onClick={() => imageInputRef.current?.click()}>
                     <FileImage className="h-5 w-5" aria-hidden="true" />
                   </ComposerToolButton>
-                  <ComposerToolButton label="上传文件">
+                  <ComposerToolButton label="上传文件" onClick={() => fileInputRef.current?.click()}>
                     <Paperclip className="h-5 w-5" aria-hidden="true" />
                   </ComposerToolButton>
-                  <ComposerToolButton label="知识库">
-                    <Search className="h-5 w-5" aria-hidden="true" />
-                  </ComposerToolButton>
+                  <div className="relative" ref={knowledgeBaseSelectorRef}>
+                    <ComposerToolButton
+                      label="知识库"
+                      onClick={() => setKnowledgeBasePanelOpen((open) => !open)}
+                    >
+                      <Search className="h-5 w-5" aria-hidden="true" />
+                    </ComposerToolButton>
+                    <KnowledgeBasePickerPanel
+                      open={knowledgeBasePanelOpen}
+                      knowledgeBases={knowledgeBases}
+                      selectedIds={selectedKnowledgeBaseIds}
+                      onToggle={(knowledgeBaseId) =>
+                        setSelectedKnowledgeBaseIds((current) =>
+                          current.includes(knowledgeBaseId)
+                            ? current.filter((id) => id !== knowledgeBaseId)
+                            : [...current, knowledgeBaseId],
+                        )
+                      }
+                    />
+                  </div>
                 </div>
                 <div className="relative flex items-center gap-3" ref={modelSelectorRef}>
                   <button
@@ -773,14 +1118,7 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                                       <div className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
                                         {model.modelName}
                                       </div>
-                                      <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
-                                        <span className="inline-flex items-center gap-0.5 rounded border border-gray-100 bg-gray-50 px-1.5 py-0.5">
-                                          <Type className="h-3 w-3" aria-hidden="true" />
-                                          <ChevronRight className="h-2.5 w-2.5" aria-hidden="true" />
-                                          <Type className="h-3 w-3" aria-hidden="true" />
-                                        </span>
-                                        <Lightbulb className="h-3.5 w-3.5" aria-hidden="true" />
-                                      </div>
+                                      <ModelCapabilityIcons model={model} />
                                     </div>
                                     <Star className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
                                   </button>
@@ -800,15 +1138,49 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
                   <Button
                     type="button"
                     size="icon"
-                    disabled={!activeSessionId || !draft.trim()}
-                    className="h-9 w-9 rounded-full"
-                    onClick={() => void sendMessage()}
+                    disabled={!activeSessionId || (!streaming && !draft.trim())}
+                    className={cn("h-9 w-9 rounded-full", streaming && "bg-pink-500 hover:bg-pink-500/90")}
+                    onClick={() => {
+                      if (streaming) {
+                        void stopGeneration();
+                        return;
+                      }
+                      void sendMessage();
+                    }}
                   >
-                    <Send className="h-4 w-4" aria-hidden="true" />
-                    <span className="sr-only">发送</span>
+                    {streaming ? (
+                      <>
+                        <Square className="h-4 w-4 fill-current" aria-hidden="true" />
+                        <span className="sr-only">停止生成</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-4 w-4" aria-hidden="true" />
+                        <span className="sr-only">发送</span>
+                      </>
+                    )}
                   </Button>
                 </div>
               </div>
+            </div>
+            <div className="mx-auto mt-1 flex max-w-[760px] items-center gap-1 px-3 text-muted-foreground">
+              <button
+                type="button"
+                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-xs font-medium transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+                onClick={() => setWorkspaceCollapsed((current) => !current)}
+              >
+                <Folder className="h-4 w-4" aria-hidden="true" />
+                <span className="max-w-[180px] truncate">{workspaceDisplayName}</span>
+              </button>
+              <button
+                type="button"
+                aria-label={getMemoryUsageButtonLabel(memoryTokenStats)}
+                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-xs font-medium transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+                onClick={() => void openMemoryPanel()}
+              >
+                <Database className="h-4 w-4" aria-hidden="true" />
+                <MemoryUsageIndicator percentage={memoryTokenStats?.percentage ?? 0} />
+              </button>
             </div>
           </footer>
         </div>
@@ -842,6 +1214,29 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
         <DeleteMessageDialog
           onCancel={() => setDeletingMessage(null)}
           onConfirm={() => void confirmDeleteMessage()}
+        />
+      ) : null}
+      {memoryPanelOpen ? (
+        <MemoryManagementDialog
+          tokenStats={memoryTokenStats}
+          summaries={memorySummaries}
+          loading={memoryLoading}
+          error={memoryError}
+          compressing={memoryCompressing}
+          streaming={streaming}
+          editingSummary={editingSummary}
+          summaryDraft={summaryDraft}
+          onSummaryDraftChange={setSummaryDraft}
+          onClose={() => {
+            setMemoryPanelOpen(false);
+            setEditingSummary(null);
+          }}
+          onRefresh={() => void loadMemoryPanelData()}
+          onCompress={() => void compressCurrentSessionMemory()}
+          onEdit={startEditSummary}
+          onCancelEdit={() => setEditingSummary(null)}
+          onSaveEdit={() => void saveSummaryEdit()}
+          onDelete={(summary) => void deleteMemorySummary(summary)}
         />
       ) : null}
     </div>
@@ -943,6 +1338,494 @@ export function ChatWorkspace({ api = mosaicApi }: ChatWorkspaceProps) {
     await api.client.deleteMessage(message.id);
     setMessages((current) => current.filter((item) => item.id !== message.id));
   }
+}
+
+function QuestionOutline({
+  items,
+  onSelect,
+}: {
+  items: { id: string; title: string }[];
+  onSelect: (messageId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  if (items.length === 0) return null;
+
+  return (
+    <div className="absolute right-4 top-1/2 z-30 -translate-y-1/2">
+      {!expanded ? (
+        <button
+          type="button"
+          aria-label="提问记录"
+          title="提问记录"
+          className="h-12 w-1 rounded-full bg-slate-300 transition-colors hover:bg-slate-400 dark:bg-[#3a3c40] dark:hover:bg-[#55575c]"
+          onMouseEnter={() => setExpanded(true)}
+        />
+      ) : (
+        <nav
+          aria-label="提问记录"
+          className="absolute right-0 top-1/2 max-h-[80vh] w-[280px] -translate-y-1/2 overflow-y-auto rounded-lg border border-slate-200 bg-white py-2 shadow-lg dark:border-[#2e3035] dark:bg-[#232428]"
+          onMouseLeave={() => setExpanded(false)}
+        >
+          {items.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="block w-full truncate border-l-2 border-transparent px-3 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-50 dark:text-[#e8e9ed] dark:hover:bg-[#2a2c30]"
+              onClick={() => onSelect(item.id)}
+            >
+              {item.title}
+            </button>
+          ))}
+        </nav>
+      )}
+    </div>
+  );
+}
+
+function MemoryUsageIndicator({ percentage }: { percentage: number }) {
+  const normalized = Math.max(0, Math.min(100, percentage));
+  const barCount = 14;
+  const activeBars = Math.round((normalized / 100) * barCount);
+
+  return (
+    <span
+      data-testid="memory-usage-indicator"
+      className="inline-flex items-end gap-[2px]"
+      aria-hidden="true"
+      title={`使用率 ${normalized}%`}
+    >
+      {Array.from({ length: barCount }).map((_, index) => (
+        <span
+          key={index}
+          className={cn(
+            "h-3 w-[2px] rounded-full",
+            index < activeBars ? "bg-green-500" : "bg-slate-200 dark:bg-[#3a3c40]",
+          )}
+        />
+      ))}
+    </span>
+  );
+}
+
+function getMemoryUsageButtonLabel(tokenStats: SessionTokenStats | null): string {
+  if (!tokenStats) return "记忆管理，使用率 0%";
+  return `记忆管理，使用率 ${tokenStats.percentage}%`;
+}
+
+function getWorkspaceDisplayName(workspacePath?: string | null): string {
+  if (!workspacePath) return "打开工作目录";
+  const normalizedPath = workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalizedPath.split("/").pop() || workspacePath;
+}
+
+function MemoryManagementDialog({
+  tokenStats,
+  summaries,
+  loading,
+  error,
+  compressing,
+  streaming,
+  editingSummary,
+  summaryDraft,
+  onSummaryDraftChange,
+  onClose,
+  onRefresh,
+  onCompress,
+  onEdit,
+  onCancelEdit,
+  onSaveEdit,
+  onDelete,
+}: {
+  tokenStats: SessionTokenStats | null;
+  summaries: SessionSummary[];
+  loading: boolean;
+  error: string | null;
+  compressing: boolean;
+  streaming: boolean;
+  editingSummary: SessionSummary | null;
+  summaryDraft: string;
+  onSummaryDraftChange: (value: string) => void;
+  onClose: () => void;
+  onRefresh: () => void;
+  onCompress: () => void;
+  onEdit: (summary: SessionSummary) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
+  onDelete: (summary: SessionSummary) => void;
+}) {
+  const latestSummary = summaries[0] ?? null;
+  const [confirmCompressOpen, setConfirmCompressOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 px-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="memory-management-title"
+        className="max-h-[86vh] w-full max-w-[390px] overflow-hidden rounded-xl bg-white shadow-[0_12px_32px_rgba(0,0,0,0.15),0_4px_8px_rgba(0,0,0,0.1)] ring-1 ring-gray-200 dark:bg-[#232428] dark:ring-[#34363c]"
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-[#34363c]">
+          <h2 id="memory-management-title" className="text-base font-semibold text-slate-900 dark:text-slate-100">
+            记忆管理
+          </h2>
+          <button
+            type="button"
+            aria-label="关闭记忆管理"
+            className="rounded p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+            onClick={onClose}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="max-h-[calc(86vh-64px)] overflow-y-auto px-5 py-4">
+          {error ? (
+            <div className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-300">
+              {error}
+            </div>
+          ) : null}
+
+          {tokenStats ? (
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">上下文使用率</span>
+                <span className={cn("text-sm font-semibold", getUsageColorClass(tokenStats.percentage))}>
+                  {tokenStats.percentage}%
+                </span>
+              </div>
+              <div className="h-4 overflow-hidden rounded-full bg-slate-100 dark:bg-[#1e1f23]">
+                <div
+                  className={cn("h-full rounded-full", getUsageBarClass(tokenStats.percentage))}
+                  style={{ width: `${Math.min(100, Math.max(0, tokenStats.percentage))}%` }}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                <MemoryStat label="已用" value={formatMemoryNumber(tokenStats.usedTokens)} />
+                <MemoryStat
+                  label="消息"
+                  value={formatMemoryNumber(tokenStats.messageCount)}
+                  className="border-x border-slate-100 dark:border-[#34363c]"
+                />
+                <MemoryStat label="总量" value={formatMemoryNumber(tokenStats.totalTokens)} />
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-muted-foreground dark:border-[#34363c]">
+              {loading ? "加载中..." : "暂无上下文统计"}
+            </div>
+          )}
+
+          <div className="mt-4 flex gap-2">
+            <Button type="button" variant="secondary" size="sm" className="flex-1" disabled={loading} onClick={onRefresh}>
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              刷新
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="flex-1"
+              disabled={compressing || streaming}
+              onClick={() => setConfirmCompressOpen(true)}
+            >
+              {compressing ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  压缩中...
+                </>
+              ) : (
+                "压缩"
+              )}
+            </Button>
+          </div>
+
+          <div className="mt-5 border-t border-slate-100 pt-4 dark:border-[#34363c]">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">最新压缩状态</h3>
+              <span className="text-xs text-muted-foreground">已压缩 {summaries.length} 次</span>
+            </div>
+
+            {latestSummary ? (
+              <MemorySummaryCard
+                summary={latestSummary}
+                onHistory={() => setHistoryOpen(true)}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            ) : (
+              <div className="rounded-lg border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-muted-foreground dark:border-[#34363c]">
+                暂无压缩记录
+              </div>
+            )}
+          </div>
+
+          {summaries.length > 1 ? (
+            <details className="mt-4">
+              <summary className="cursor-pointer text-sm font-medium text-muted-foreground">压缩历史记录</summary>
+              <div className="mt-3 space-y-3">
+                {summaries.slice(1).map((summary) => (
+                  <MemorySummaryCard key={summary.id} summary={summary} compact onEdit={onEdit} onDelete={onDelete} />
+                ))}
+              </div>
+            </details>
+          ) : null}
+        </div>
+      </div>
+      {historyOpen ? (
+        <div className="fixed inset-0 z-60 grid place-items-center bg-black/30 px-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="memory-history-title"
+            className="max-h-[80vh] w-full max-w-[720px] overflow-hidden rounded-xl bg-white shadow-[0_12px_32px_rgba(0,0,0,0.16)] ring-1 ring-gray-200 dark:bg-[#232428] dark:ring-[#34363c]"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-[#34363c]">
+              <h3 id="memory-history-title" className="text-base font-semibold">
+                压缩历史记录
+              </h3>
+              <button
+                type="button"
+                aria-label="关闭历史记录"
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-slate-100 hover:text-foreground dark:hover:bg-[#2a2c30]"
+                onClick={() => setHistoryOpen(false)}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            <div className="max-h-[calc(80vh-64px)] space-y-3 overflow-y-auto p-5">
+              {summaries.length > 0 ? (
+                summaries.map((summary) => (
+                  <MemorySummaryCard key={summary.id} summary={summary} compact onEdit={onEdit} onDelete={onDelete} />
+                ))
+              ) : (
+                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-muted-foreground dark:border-[#34363c]">
+                  暂无压缩记录
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {editingSummary ? (
+        <div className="fixed inset-0 z-60 grid place-items-center bg-black/30 px-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="编辑摘要"
+            className="w-full max-w-[560px] rounded-xl bg-white p-5 shadow-[0_12px_32px_rgba(0,0,0,0.15)] dark:bg-[#232428]"
+          >
+            <h3 className="text-base font-semibold">编辑摘要</h3>
+            <Textarea
+              value={summaryDraft}
+              onChange={(event) => onSummaryDraftChange(event.target.value)}
+              rows={8}
+              className="mt-4"
+              aria-label="摘要内容"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={onCancelEdit}>
+                取消
+              </Button>
+              <Button type="button" onClick={onSaveEdit}>
+                保存
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {confirmCompressOpen ? (
+        <div className="fixed inset-0 z-60 grid place-items-center bg-black/30 px-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-compress-title"
+            className="w-full max-w-[360px] rounded-xl bg-white p-4 shadow-[0_12px_32px_rgba(0,0,0,0.16)] ring-1 ring-gray-200 dark:bg-[#232428] dark:ring-[#34363c]"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-1 rounded-full bg-amber-50 p-1 text-amber-500 dark:bg-amber-500/10">
+                <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 id="confirm-compress-title" className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  确认压缩
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                  确定要压缩当前会话的历史记录吗？此操作将根据会话和角色的配置自动执行压缩。
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setConfirmCompressOpen(false)}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  setConfirmCompressOpen(false);
+                  onCompress();
+                }}
+              >
+                确认
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>,
+    document.body,
+  );
+}
+
+function MemoryStat({ label, value, className }: { label: string; value: string; className?: string }) {
+  return (
+    <div className={cn("py-1", className)}>
+      <div className="mb-0.5 text-xs text-muted-foreground">{label}</div>
+      <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">{value}</div>
+    </div>
+  );
+}
+
+function MemorySummaryCard({
+  summary,
+  compact = false,
+  onHistory,
+  onEdit,
+  onDelete,
+}: {
+  summary: SessionSummary;
+  compact?: boolean;
+  onHistory?: () => void;
+  onEdit: (summary: SessionSummary) => void;
+  onDelete: (summary: SessionSummary) => void;
+}) {
+  const strategyLabel = getSummaryStrategyLabel(summary);
+  const tokenDelta =
+    typeof summary.compressionStats?.beforeTokenCount === "number" &&
+    typeof summary.compressionStats?.afterTokenCount === "number"
+      ? summary.compressionStats.beforeTokenCount - summary.compressionStats.afterTokenCount
+      : null;
+  const compressionRate =
+    typeof summary.compressionStats?.beforeTokenCount === "number" &&
+    typeof summary.compressionStats?.afterTokenCount === "number" &&
+    summary.compressionStats.beforeTokenCount > 0
+      ? (1 - summary.compressionStats.afterTokenCount / summary.compressionStats.beforeTokenCount) * 100
+      : null;
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border border-slate-100 bg-white p-3 dark:border-[#34363c] dark:bg-[#1e1f23]",
+        compact && "p-2",
+      )}
+    >
+      {summary.summaryContent ? (
+        <div className="whitespace-pre-wrap text-xs leading-6 text-slate-700 dark:text-slate-300">{summary.summaryContent}</div>
+      ) : (
+        <div className="text-xs italic text-muted-foreground">无摘要内容</div>
+      )}
+      {summary.compressionStats ? (
+        <div className="mt-2 space-y-1 rounded bg-slate-50 p-2 text-xs dark:bg-[#232428]">
+          {typeof summary.compressionStats.beforeTokenCount === "number" &&
+          typeof summary.compressionStats.afterTokenCount === "number" ? (
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">Token:</span>
+              <span>
+                {formatMemoryNumber(summary.compressionStats.beforeTokenCount)} →{" "}
+                {formatMemoryNumber(summary.compressionStats.afterTokenCount)}
+                {tokenDelta !== null && tokenDelta > 0 ? (
+                  <span className="ml-1 text-green-600 dark:text-green-400">
+                    (-{formatMemoryNumber(tokenDelta)})
+                  </span>
+                ) : null}
+              </span>
+            </div>
+          ) : null}
+          {typeof summary.compressionStats.beforeMessageCount === "number" &&
+          typeof summary.compressionStats.afterMessageCount === "number" ? (
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">消息:</span>
+              <span>
+                {summary.compressionStats.beforeMessageCount} → {summary.compressionStats.afterMessageCount}
+              </span>
+            </div>
+          ) : null}
+          {compressionRate !== null ? (
+            <div className="flex justify-between gap-3">
+              <span className="text-muted-foreground">压缩率:</span>
+              <span className="font-medium text-green-600 dark:text-green-400">{compressionRate.toFixed(2)}%</span>
+            </div>
+          ) : null}
+          <div className="flex items-center gap-1.5 pt-1">
+            <span
+              className={cn(
+                "inline-flex rounded px-2 py-0.5 text-xs font-medium",
+                summary.pruningMetadata
+                  ? "bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300"
+                  : "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300",
+              )}
+            >
+              {strategyLabel}
+            </span>
+          </div>
+        </div>
+      ) : null}
+      <div className="mt-3 flex items-center justify-between gap-2 text-xs">
+        <span className="truncate text-muted-foreground">{formatMemoryTime(summary.createdAt)}</span>
+        <div className="flex gap-1">
+          {onHistory ? (
+            <button
+              type="button"
+              className="rounded px-2 py-1 text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-[#2a2c30]"
+              onClick={onHistory}
+            >
+              历史
+            </button>
+          ) : null}
+          <button type="button" className="rounded px-2 py-1 text-blue-500 hover:bg-blue-50" onClick={() => onEdit(summary)}>
+            编辑
+          </button>
+          <button type="button" className="rounded px-2 py-1 text-red-500 hover:bg-red-50" onClick={() => onDelete(summary)}>
+            删除
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getSummaryStrategyLabel(summary: SessionSummary): string {
+  if (summary.pruningMetadata) return "仅裁剪";
+  if (summary.cleaningStrategy === "pruned_only") return "仅裁剪";
+  return "摘要压缩";
+}
+
+function formatMemoryNumber(value: number): string {
+  return value.toLocaleString();
+}
+
+function formatMemoryTime(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function getUsageColorClass(percentage: number): string {
+  if (percentage < 60) return "text-green-600";
+  if (percentage < 80) return "text-yellow-600";
+  return "text-red-600";
+}
+
+function getUsageBarClass(percentage: number): string {
+  if (percentage < 60) return "bg-green-500";
+  if (percentage < 80) return "bg-yellow-500";
+  return "bg-red-500";
 }
 
 function EditMessageDialog({
@@ -1095,6 +1978,17 @@ function getPendingUserMessage(state: unknown): Message | null {
   return pendingMessage;
 }
 
+function getPendingKnowledgeBaseIds(state: unknown): string[] {
+  const ids = (state as ChatRouteState | null)?.pendingKnowledgeBaseIds;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+}
+
+function normalizeKnowledgeBases(response: unknown): KnowledgeBase[] {
+  if (Array.isArray(response)) return response as KnowledgeBase[];
+  const items = (response as { items?: KnowledgeBase[] } | null)?.items;
+  return Array.isArray(items) ? items : [];
+}
+
 function clearPendingRouteState(): void {
   if (typeof window === "undefined") return;
   const currentState = window.history.state;
@@ -1127,9 +2021,11 @@ function ModelAvatar({
 
 function ComposerToolButton({
   label,
+  onClick,
   children,
 }: {
   label: string;
+  onClick?: () => void;
   children: React.ReactNode;
 }) {
   const [visible, setVisible] = useState(false);
@@ -1140,6 +2036,7 @@ function ComposerToolButton({
         type="button"
         aria-label={label}
         className="hover:text-foreground"
+        onClick={onClick}
         onFocus={() => setVisible(true)}
         onBlur={() => setVisible(false)}
         onMouseEnter={() => setVisible(true)}
@@ -1177,7 +2074,7 @@ function createStreamingAssistantMessage(): Message {
   };
 }
 
-function createLocalUserMessage(content: string): Message {
+function createLocalUserMessage(content: string, files: FileAttachment[] = []): Message {
   const now = Date.now();
   return {
     id: `user-local-${now}`,
@@ -1190,7 +2087,23 @@ function createLocalUserMessage(content: string): Message {
       },
     ],
     state: { isStreaming: false },
+    ...(files.length > 0 ? { files } : {}),
   };
+}
+
+function createComposerAttachment(file: File): ComposerAttachment {
+  return {
+    id: `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    file,
+    status: "uploading",
+    previewUrl: createLocalPreviewUrl(file),
+  };
+}
+
+function createLocalPreviewUrl(file: File): string | undefined {
+  if (!file.type.startsWith("image/")) return undefined;
+  if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return undefined;
+  return URL.createObjectURL(file);
 }
 
 function getMessageText(message: Message): string {
@@ -1198,6 +2111,22 @@ function getMessageText(message: Message): string {
     .map((content) => content.content ?? "")
     .join("")
     .trim();
+}
+
+function getQuestionOutlineTitle(message: Message): string {
+  const text = getMessageText(message).replace(/\s+/g, " ");
+  if (!text) return "未命名提问";
+  return text.length > 40 ? `${text.slice(0, 40)}...` : text;
+}
+
+function escapeDataAttributeValue(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+function getMessageFileIds(message: Message): string[] {
+  return (message.files ?? [])
+    .map((file) => file.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
 }
 
 function replaceLocalUserMessage(messages: Message[], localMessageId: string, serverMessage: Message): Message[] {

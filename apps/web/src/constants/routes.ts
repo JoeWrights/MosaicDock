@@ -13,6 +13,8 @@ export const RoutePath = {
   PLUGINS_LOCAL_TOOLS: "/plugins/local-tools",
   PLUGINS_SKILLS: "/plugins/skills",
   PLUGINS_MCP: "/plugins/mcp",
+  SETTING: "/setting",
+  SETTING_GENERAL: "/setting/general",
   SCHEDULER: "/scheduler",
 } as const;
 

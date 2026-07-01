@@ -19,6 +19,7 @@ import type {
   KnowledgeBaseListParams,
   KnowledgeBaseListResponse,
   Message,
+  FileAttachment,
   McpServer,
   ModelProvider,
   PaginatedResponse,
@@ -47,6 +48,7 @@ import * as knowledgeBaseService from "./services/knowledge-base-service";
 import * as messageService from "./services/message-service";
 import * as mcpServerService from "./services/mcp-server-service";
 import * as modelService from "./services/model-service";
+import * as sessionFileService from "./services/session-file-service";
 import * as sessionService from "./services/session-service";
 import * as workspaceService from "./services/workspace-service";
 
@@ -91,6 +93,10 @@ export interface MessageContentToolDetails {
   toolCalls: unknown[];
   toolCallsResponse: unknown[];
 }
+
+export type SessionTokenStats = sessionService.SessionTokenStats;
+export type SessionSummary = sessionService.SessionSummary;
+export type CompressSessionResponse = sessionService.CompressSessionResponse;
 
 export interface BotInstance {
   id: string;
@@ -233,6 +239,10 @@ export class ApiClient {
       method: "POST",
       body: credentials,
     });
+  }
+
+  async autoLogin(): Promise<LoginResponse> {
+    return bootstrapService.autoLogin<LoginResponse>(this.requestClient);
   }
 
   async getProfile(): Promise<User> {
@@ -446,6 +456,25 @@ export class ApiClient {
     return bootstrapService.fetchAppearanceSettings<T>(this.requestClient);
   }
 
+  async fetchGroupSettings<T = Record<string, unknown>>(group: string): Promise<T> {
+    return bootstrapService.fetchGroupSettings<T>(this.requestClient, group);
+  }
+
+  async updateGroupSettings<T = Record<string, unknown>>(
+    group: string,
+    data: Record<string, unknown>,
+  ): Promise<T> {
+    return bootstrapService.updateGroupSettings<T>(this.requestClient, group, data);
+  }
+
+  async uploadWallpaper<T = { url: string }>(file: File): Promise<T> {
+    return bootstrapService.uploadWallpaper<T>(this.requestClient, file);
+  }
+
+  async deleteWallpaper<T = { success: boolean }>(): Promise<T> {
+    return bootstrapService.deleteWallpaper<T>(this.requestClient);
+  }
+
   async fetchGlobalPlugins<T = unknown>(): Promise<T> {
     return bootstrapService.fetchGlobalPlugins<T>(this.requestClient);
   }
@@ -617,6 +646,29 @@ export class ApiClient {
     return sessionService.fetchSessionMessages(this.requestClient, sessionId, options);
   }
 
+  async fetchSessionTokenStats(sessionId: string): Promise<sessionService.SessionTokenStats> {
+    return sessionService.fetchSessionTokenStats(this.requestClient, sessionId);
+  }
+
+  async fetchSessionSummaries(sessionId: string): Promise<sessionService.SessionSummary[]> {
+    return sessionService.fetchSessionSummaries(this.requestClient, sessionId);
+  }
+
+  async compressSession(sessionId: string): Promise<sessionService.CompressSessionResponse> {
+    return sessionService.compressSession(this.requestClient, sessionId);
+  }
+
+  async updateSummary(
+    summaryId: string,
+    data: { summaryContent?: string },
+  ): Promise<sessionService.SessionSummary> {
+    return sessionService.updateSummary(this.requestClient, summaryId, data);
+  }
+
+  async deleteSummary<T = { success: boolean }>(summaryId: string): Promise<T> {
+    return sessionService.deleteSummary<T>(this.requestClient, summaryId);
+  }
+
   async fetchWorkspaceTree(sessionId: string): Promise<WorkspaceTreeResponse> {
     return workspaceService.fetchWorkspaceTree(this.requestClient, sessionId);
   }
@@ -650,6 +702,10 @@ export class ApiClient {
       replaceMessageId,
       knowledgeBaseIds,
     );
+  }
+
+  async uploadSessionFile(sessionId: string, file: File): Promise<FileAttachment> {
+    return sessionFileService.uploadSessionFile(this.requestClient, sessionId, file);
   }
 
   async updateMessage<T = Message>(messageId: string, data: Record<string, unknown>): Promise<T> {

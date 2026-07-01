@@ -151,6 +151,34 @@ describe("ApiClient", () => {
     expect(calls[7]?.headers.get("Content-Type")).toBe("multipart/form-data");
   });
 
+  it("manages grouped settings and wallpaper endpoints", async () => {
+    const { adapter, calls } = createAdapter({ success: true });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+    const wallpaper = new File(["image"], "wallpaper.png", { type: "image/png" });
+
+    await client.fetchGroupSettings("system");
+    await client.updateGroupSettings("system", { autoLoginEnabled: true });
+    await client.autoLogin();
+    await client.uploadWallpaper(wallpaper);
+    await client.deleteWallpaper();
+
+    expect(calls.map((config) => config.url)).toEqual([
+      "/settings/system",
+      "/settings/system",
+      "/auth/auto-login",
+      "/user/wallpaper",
+      "/user/wallpaper",
+    ]);
+    expect(calls.map((config) => config.method)).toEqual(["get", "put", "post", "post", "delete"]);
+    expect(requestData(calls[1]!)).toEqual({ autoLoginEnabled: true });
+    expect(calls[3]?.data).toBeInstanceOf(FormData);
+    expect(calls[3]?.headers.get("Content-Type")).toBe("multipart/form-data");
+  });
+
   it("manages session groups with legacy endpoints", async () => {
     const { adapter, calls } = createAdapter({ success: true });
     const client = new ApiClient({
@@ -181,6 +209,37 @@ describe("ApiClient", () => {
       { name: "客户项目" },
       undefined,
       { groupIds: ["group-3", "group-1"] },
+    ]);
+  });
+
+  it("manages session memory summaries and compression endpoints", async () => {
+    const { adapter, calls } = createAdapter({ success: true });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+
+    await client.fetchSessionTokenStats("session-1");
+    await client.fetchSessionSummaries("session-1");
+    await client.compressSession("session-1");
+    await client.updateSummary("summary-1", { summaryContent: "新的摘要" });
+    await client.deleteSummary("summary-1");
+
+    expect(calls.map((config) => config.url)).toEqual([
+      "/sessions/session-1/token-stats",
+      "/sessions/session-1/summaries",
+      "/sessions/session-1/compress",
+      "/sessions/summaries/summary-1",
+      "/sessions/summaries/summary-1",
+    ]);
+    expect(calls.map((config) => config.method)).toEqual(["get", "get", "post", "put", "delete"]);
+    expect(calls.map(requestData)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      { summaryContent: "新的摘要" },
+      undefined,
     ]);
   });
 
@@ -468,6 +527,35 @@ describe("ApiClient", () => {
 
     expect(calls[0]).toMatchObject({
       url: "/characters/character-1/avatars",
+      method: "post",
+    });
+    expect(calls[0]?.data).toBeInstanceOf(FormData);
+    expect(calls[0]?.headers.get("Content-Type")).toBe("multipart/form-data");
+  });
+
+  it("uploads session files as multipart form data", async () => {
+    const { adapter, calls } = createAdapter({
+      id: "file-1",
+      displayName: "screenshot.png",
+      fileName: "screenshot.png",
+      fileSize: 12,
+      fileType: "image",
+      fileExtension: "png",
+      url: "/uploads/images/screenshot.jpg",
+      previewUrl: "/uploads/previews/screenshot.jpg",
+    });
+    const client = new ApiClient({
+      adapter,
+      tokenProvider: () => null,
+      clientIdProvider: () => "client-123",
+    });
+    const image = new File(["image-bytes"], "screenshot.png", { type: "image/png" });
+
+    const uploaded = await client.uploadSessionFile("session-1", image);
+
+    expect(uploaded).toMatchObject({ id: "file-1", displayName: "screenshot.png", fileType: "image" });
+    expect(calls[0]).toMatchObject({
+      url: "/sessions/session-1/files",
       method: "post",
     });
     expect(calls[0]?.data).toBeInstanceOf(FormData);

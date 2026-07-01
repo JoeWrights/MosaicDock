@@ -8,6 +8,7 @@ import {
   Clock,
   Copy,
   ArrowDown,
+  Loader2,
   MoreVertical,
   Pencil,
   RotateCcw,
@@ -17,6 +18,7 @@ import {
 import type { Message, MessageContent } from "@mosaic-dock/shared";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
+import { MessageAttachments } from "./attachments";
 import { MarkdownContent } from "./MarkdownContent";
 import {
   getContentVersions,
@@ -61,6 +63,7 @@ export function ChatMessageItem({
   const versions = getContentVersions(message);
   const displayGroups = groupContentsForDisplay(turns);
   const isWaitingForAnswer = isStreamingEmptyAssistant(message, turns);
+  const isStreamingAnswer = Boolean(message.state?.isStreaming);
   const contentTime = formatMessageContentTime(activeContent?.createdAt);
 
   if (message.role === "user") {
@@ -70,6 +73,7 @@ export function ChatMessageItem({
           <div className="whitespace-pre-wrap rounded-2xl bg-blue-50 px-4 py-3 leading-7 text-blue-700 shadow-sm dark:bg-blue-500/15 dark:text-blue-100">
             {turns.map((content) => content.content ?? "").join("")}
           </div>
+          <MessageAttachments files={message.files} align="right" />
           <MessageActions
             message={message}
             versions={[]}
@@ -110,6 +114,7 @@ export function ChatMessageItem({
                 ),
               )
             )}
+            {isStreamingAnswer && !isWaitingForAnswer ? <AnswerStreamingFooter /> : null}
           </div>
           <FinishNotice message={message} onContinue={onContinue} />
           {usage ? (
@@ -168,6 +173,18 @@ function AnswerLoading() {
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" />
       </span>
       <span>正在生成回答...</span>
+    </div>
+  );
+}
+
+function AnswerStreamingFooter() {
+  return (
+    <div
+      className="flex items-center gap-2 border-t border-slate-100 pt-3 text-sm font-medium text-muted-foreground dark:border-[#34363c]"
+      role="status"
+    >
+      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+      <span>回答中</span>
     </div>
   );
 }

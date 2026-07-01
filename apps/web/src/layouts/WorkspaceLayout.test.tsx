@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -70,6 +70,7 @@ function renderLayout() {
           <Route path="/knowledge-base" element={<TestPageHeader />} />
           <Route path="/scheduler" element={<TestPageHeader />} />
           <Route path="/models" element={<TestPageHeader />} />
+          <Route path="/setting/:tab" element={<TestPageHeader />} />
           <Route path="/chat/:sessionId" element={<TestPageHeader />} />
         </Route>
       </Routes>
@@ -175,6 +176,16 @@ describe("WorkspaceLayout", () => {
 
     expect(screen.getByTestId("location-path")).toHaveTextContent("/bots/management");
     expect(screen.getByRole("button", { name: "机器人" }).className).toContain("bg-slate-100");
+  });
+
+  it("navigates to the guada-style settings page from the sidebar footer", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "设置" }));
+
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/setting/general");
+    expect(screen.getByRole("button", { name: "设置" }).className).toContain("bg-slate-100");
   });
 
   it("navigates to the knowledge base page from the guada sidebar", async () => {
@@ -424,6 +435,8 @@ describe("WorkspaceLayout", () => {
     await user.click(screen.getByRole("button", { name: "确定删除" }));
 
     expect(mockClient.deleteSession).toHaveBeenCalledWith("session-1", { deleteWorkspace: false });
-    expect(screen.getByTestId("location-path")).toHaveTextContent("/chat/new-session");
+    await waitFor(() => {
+      expect(screen.getByTestId("location-path")).toHaveTextContent("/chat/new-session");
+    });
   });
 });

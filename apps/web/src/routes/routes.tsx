@@ -8,6 +8,7 @@ import ModelsPage from "../pages/models";
 import NewSessionPage from "../pages/new-session";
 import PluginsPage from "../pages/plugins";
 import SchedulerPage from "../pages/scheduler";
+import SettingsPage from "../pages/settings";
 import type { AppRoute } from "./make-route";
 
 const pageRoutes: AppRoute[] = [
@@ -58,6 +59,14 @@ const pageRoutes: AppRoute[] = [
       {
         path: RoutePath.MODELS,
         Component: ModelsPage,
+      },
+      {
+        path: RoutePath.SETTING,
+        redirect: RoutePath.SETTING_GENERAL,
+      },
+      {
+        path: `${RoutePath.SETTING}/:tab`,
+        Component: SettingsPage,
       },
       {
         path: `${RoutePath.CHAT}/new-session`,

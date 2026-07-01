@@ -308,7 +308,7 @@ describe("ModelsPage", () => {
       config: {
         inputCapabilities: ["text", "image"],
         outputCapabilities: ["text", "image"],
-        features: ["tool"],
+        features: ["tools"],
         contextWindow: 64000,
         maxOutputTokens: 8192,
         vendor: "custom",

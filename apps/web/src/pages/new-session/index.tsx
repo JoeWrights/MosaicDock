@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Bot,
@@ -12,20 +12,24 @@ import {
   Send,
   Settings,
   Star,
-  Type,
   Check,
   X,
 } from "lucide-react";
 import { mosaicApi, type ApiClient, type SessionEventsService } from "@mosaic-dock/api-client";
-import type { Message, Model, ModelProvider } from "@mosaic-dock/shared";
+import type { FileAttachment, KnowledgeBase, Message, Model, ModelProvider } from "@mosaic-dock/shared";
 import {
   SessionGroupManageDialog,
   type SessionGroup,
   type SessionGroupManageApi,
 } from "../../components/session/SessionGroupManageDialog";
 import { WorkspacePageHeader } from "../../components/layout/WorkspacePageHeader";
+import { ComposerAttachments, type ComposerAttachment } from "../../components/chat/attachments";
+import { ComposerEditor } from "../../components/chat/ComposerEditor";
+import { KnowledgeBasePickerPanel, SelectedKnowledgeBaseTags } from "../../components/chat/KnowledgeBasePicker";
+import { GUADA_IMAGE_FILE_ACCEPT, GUADA_TEXT_FILE_ACCEPT } from "../../components/chat/upload-accept";
+import { normalizeSkills, type SkillOption } from "../../components/chat/SkillPicker";
+import { ModelCapabilityIcons } from "../../components/models/ModelCapabilityIcons";
 import { Button } from "../../components/ui/button";
-import { Textarea } from "../../components/ui/textarea";
 import { RoutePath } from "../../constants/routes";
 
 export interface NewSessionPageApi {
@@ -38,6 +42,7 @@ export interface NewSessionPageApi {
     fetchCharacters: () => Promise<unknown>;
     fetchTeams: () => Promise<unknown>;
     fetchSessions: ApiClient["fetchSessions"];
+    uploadSessionFile: ApiClient["uploadSessionFile"];
     createSession: ApiClient["createSession"];
     createSessionGroup: SessionGroupManageApi["createSessionGroup"];
     updateSessionGroup: SessionGroupManageApi["updateSessionGroup"];
@@ -71,10 +76,15 @@ interface CharacterOption {
 
 export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
   const [draft, setDraft] = useState("");
+  const [composerResetKey, setComposerResetKey] = useState(0);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [displayedGreeting, setDisplayedGreeting] = useState("");
   const [modelProviders, setModelProviders] = useState<ModelProvider[]>([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [selectedKnowledgeBaseIds, setSelectedKnowledgeBaseIds] = useState<string[]>([]);
+  const [knowledgeBasePanelOpen, setKnowledgeBasePanelOpen] = useState(false);
+  const [skills, setSkills] = useState<SkillOption[]>([]);
   const [characters, setCharacters] = useState<CharacterOption[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [modelPanelOpen, setModelPanelOpen] = useState(false);
@@ -91,7 +101,11 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
   const [groupManageOpen, setGroupManageOpen] = useState(false);
   const modelSelectorRef = useRef<HTMLDivElement>(null);
   const thinkingSelectorRef = useRef<HTMLDivElement>(null);
+  const knowledgeBaseSelectorRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
 
   const models = flattenModels(modelProviders);
   const selectedModel = models.find(({ model }) => model.id === selectedModelId)?.model ?? models[0]?.model ?? null;
@@ -119,7 +133,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
 
     async function bootstrap() {
       try {
-        const [groupsResponse, , , , modelsResponse, charactersResponse] = await Promise.all([
+        const [groupsResponse, knowledgeBaseResponse, skillsResponse, , modelsResponse, charactersResponse] = await Promise.all([
           api.client.fetchSessionGroups(),
           api.client.fetchKnowledgeBases(),
           api.client.fetchSkills(),
@@ -133,6 +147,8 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
         if (!cancelled) {
           const providers = modelsResponse.items ?? [];
           setSessionGroups(normalizeSessionGroups(groupsResponse));
+          setKnowledgeBases(normalizeKnowledgeBases(knowledgeBaseResponse));
+          setSkills(normalizeSkills(skillsResponse));
           setModelProviders(providers);
           setCharacters(normalizeCharacters(charactersResponse));
           setSelectedModelId((current) => current ?? flattenModels(providers)[0]?.model.id ?? null);
@@ -216,6 +232,23 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
     };
   }, [thinkingPanelOpen]);
 
+  useEffect(() => {
+    if (!knowledgeBasePanelOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (!knowledgeBaseSelectorRef.current?.contains(target)) {
+        setKnowledgeBasePanelOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [knowledgeBasePanelOpen]);
+
   function openWorkspaceDialog() {
     setWorkspaceDraft(workspacePath ?? "");
     setWorkspaceError(null);
@@ -235,8 +268,8 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
     setWorkspaceDialogOpen(false);
   }
 
-  async function sendInitialMessage() {
-    const content = draft.trim();
+  async function sendInitialMessage(nextContent = draft) {
+    const content = nextContent.trim();
     if (!content || sending) return;
 
     if (!selectedCharacter) {
@@ -245,6 +278,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
     }
 
     setSending(true);
+    setComposerResetKey((current) => current + 1);
     setBootstrapError(null);
 
     try {
@@ -256,8 +290,16 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
         ...(workspacePath ? { workspacePath } : {}),
         ...(selectedGroupId ? { groupId: selectedGroupId } : {}),
       });
+      const uploadedFiles: FileAttachment[] = [];
+      for (const attachment of attachments) {
+        const uploaded = await api.client.uploadSessionFile(session.id, attachment.file);
+        uploadedFiles.push(uploaded);
+      }
       navigate(`${RoutePath.CHAT}/${session.id}`, {
-        state: { pendingUserMessage: createLocalUserMessage(content) },
+        state: {
+          pendingUserMessage: createLocalUserMessage(content, uploadedFiles),
+          pendingKnowledgeBaseIds: selectedKnowledgeBaseIds,
+        },
       });
     } catch (error) {
       setBootstrapError(error instanceof Error ? error.message : "新建对话失败");
@@ -265,10 +307,19 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
     }
   }
 
-  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== "Enter" || event.shiftKey) return;
-    event.preventDefault();
-    void sendInitialMessage();
+
+  function addLocalAttachments(event: ChangeEvent<HTMLInputElement>) {
+    const selectedFiles = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = "";
+    if (selectedFiles.length === 0) return;
+    setAttachments((current) => [
+      ...current,
+      ...selectedFiles.map((file) => createComposerAttachment(file)),
+    ]);
+  }
+
+  function removeAttachment(attachmentId: string) {
+    setAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
   }
 
   return (
@@ -309,16 +360,41 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
             className="relative rounded-[22px] bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.08)] ring-1 ring-gray-200/80 transition-shadow duration-200 focus-within:shadow-[0_2px_22px_rgba(0,0,0,0.11)] dark:bg-[#232428] dark:ring-[#2e3035] dark:shadow-none dark:focus-within:shadow-none"
             data-testid="new-session-input-card"
           >
-            <Textarea
+            <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
+            <SelectedKnowledgeBaseTags
+              knowledgeBases={knowledgeBases}
+              selectedIds={selectedKnowledgeBaseIds}
+              onRemove={(knowledgeBaseId) =>
+                setSelectedKnowledgeBaseIds((current) => current.filter((id) => id !== knowledgeBaseId))
+              }
+            />
+            <ComposerEditor
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleComposerKeyDown}
-              placeholder="按 / 使用技能，Shift+Enter 换行"
-              rows={4}
-              className="min-h-20 border-0 bg-transparent px-0 text-base shadow-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+              onChange={setDraft}
+              onSubmit={(content) => void sendInitialMessage(content)}
+              resetKey={composerResetKey}
+              minHeightClassName="min-h-20"
+              textClassName="text-base"
+              skills={skills}
             />
             <div className="mt-3 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 text-muted-foreground">
+                <input
+                  ref={imageInputRef}
+                  aria-label="上传图片文件"
+                  type="file"
+                  accept={GUADA_IMAGE_FILE_ACCEPT}
+                  className="sr-only"
+                  onChange={addLocalAttachments}
+                />
+                <input
+                  ref={fileInputRef}
+                  aria-label="上传附件文件"
+                  type="file"
+                  accept={GUADA_TEXT_FILE_ACCEPT}
+                  className="sr-only"
+                  onChange={addLocalAttachments}
+                />
                 <div className="relative" ref={thinkingSelectorRef}>
                   <button
                     type="button"
@@ -361,15 +437,32 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
                     </div>
                   ) : null}
                 </div>
-                <ComposerToolButton label="添加图片">
+                <ComposerToolButton label="添加图片" onClick={() => imageInputRef.current?.click()}>
                   <FileImage className="h-5 w-5" aria-hidden="true" />
                 </ComposerToolButton>
-                <ComposerToolButton label="上传文件">
+                <ComposerToolButton label="上传文件" onClick={() => fileInputRef.current?.click()}>
                   <Paperclip className="h-5 w-5" aria-hidden="true" />
                 </ComposerToolButton>
-                <ComposerToolButton label="知识库">
-                  <Search className="h-5 w-5" aria-hidden="true" />
-                </ComposerToolButton>
+                <div className="relative" ref={knowledgeBaseSelectorRef}>
+                  <ComposerToolButton
+                    label="知识库"
+                    onClick={() => setKnowledgeBasePanelOpen((open) => !open)}
+                  >
+                    <Search className="h-5 w-5" aria-hidden="true" />
+                  </ComposerToolButton>
+                  <KnowledgeBasePickerPanel
+                    open={knowledgeBasePanelOpen}
+                    knowledgeBases={knowledgeBases}
+                    selectedIds={selectedKnowledgeBaseIds}
+                    onToggle={(knowledgeBaseId) =>
+                      setSelectedKnowledgeBaseIds((current) =>
+                        current.includes(knowledgeBaseId)
+                          ? current.filter((id) => id !== knowledgeBaseId)
+                          : [...current, knowledgeBaseId],
+                      )
+                    }
+                  />
+                </div>
               </div>
               <div className="relative flex items-center gap-3" ref={modelSelectorRef}>
                 <button
@@ -420,14 +513,7 @@ export function NewSessionPage({ api = mosaicApi }: NewSessionPageProps) {
                                     <div className="truncate text-sm font-semibold text-slate-800">
                                       {model.modelName}
                                     </div>
-                                    <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
-                                      <span className="inline-flex items-center gap-0.5 rounded border border-gray-100 bg-gray-50 px-1.5 py-0.5">
-                                        <Type className="h-3 w-3" aria-hidden="true" />
-                                        <ChevronRight className="h-2.5 w-2.5" aria-hidden="true" />
-                                        <Type className="h-3 w-3" aria-hidden="true" />
-                                      </span>
-                                      <Lightbulb className="h-3.5 w-3.5" aria-hidden="true" />
-                                    </div>
+                                    <ModelCapabilityIcons model={model} />
                                   </div>
                                   <Star className="h-4 w-4 shrink-0 text-gray-400" aria-hidden="true" />
                                 </button>
@@ -674,6 +760,12 @@ function normalizeSessionGroups(response: unknown): SessionGroup[] {
     .map((item) => ({ id: item.id, name: item.name }));
 }
 
+function normalizeKnowledgeBases(response: unknown): KnowledgeBase[] {
+  if (Array.isArray(response)) return response as KnowledgeBase[];
+  const items = (response as { items?: KnowledgeBase[] } | null)?.items;
+  return Array.isArray(items) ? items : [];
+}
+
 function normalizeCharacters(response: unknown): CharacterOption[] {
   const items =
     response && typeof response === "object" && "items" in response
@@ -696,7 +788,7 @@ function normalizeCharacters(response: unknown): CharacterOption[] {
     .map((item) => ({ id: item.id, title: item.title }));
 }
 
-function createLocalUserMessage(content: string): Message {
+function createLocalUserMessage(content: string, files: FileAttachment[] = []): Message {
   const now = Date.now();
   return {
     id: `user-local-${now}`,
@@ -709,7 +801,23 @@ function createLocalUserMessage(content: string): Message {
       },
     ],
     state: { isStreaming: false },
+    ...(files.length > 0 ? { files } : {}),
   };
+}
+
+function createComposerAttachment(file: File): ComposerAttachment {
+  return {
+    id: `attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    file,
+    status: "pending",
+    previewUrl: createLocalPreviewUrl(file),
+  };
+}
+
+function createLocalPreviewUrl(file: File): string | undefined {
+  if (!file.type.startsWith("image/")) return undefined;
+  if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return undefined;
+  return URL.createObjectURL(file);
 }
 
 function ModelAvatar({
@@ -731,9 +839,11 @@ function ModelAvatar({
 
 function ComposerToolButton({
   label,
+  onClick,
   children,
 }: {
   label: string;
+  onClick?: () => void;
   children: React.ReactNode;
 }) {
   const [visible, setVisible] = useState(false);
@@ -744,6 +854,7 @@ function ComposerToolButton({
         type="button"
         aria-label={label}
         className="hover:text-foreground"
+        onClick={onClick}
         onFocus={() => setVisible(true)}
         onBlur={() => setVisible(false)}
         onMouseEnter={() => setVisible(true)}

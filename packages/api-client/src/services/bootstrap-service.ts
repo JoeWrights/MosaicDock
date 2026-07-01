@@ -139,6 +139,49 @@ export function fetchAppearanceSettings<T = unknown>(request: RestRequestClient)
   return request.request<T>("/settings/appearance");
 }
 
+export function fetchGroupSettings<T = Record<string, unknown>>(
+  request: RestRequestClient,
+  group: string,
+): Promise<T> {
+  return request.request<T>(`/settings/${group}`);
+}
+
+export function updateGroupSettings<T = Record<string, unknown>>(
+  request: RestRequestClient,
+  group: string,
+  data: Record<string, unknown>,
+): Promise<T> {
+  return request.request<T>(`/settings/${group}`, {
+    method: "PUT",
+    body: data,
+  });
+}
+
+export function autoLogin<T = unknown>(request: RestRequestClient): Promise<T> {
+  return request.request<T>("/auth/auto-login", {
+    method: "POST",
+  });
+}
+
+export function uploadWallpaper<T = { url: string }>(
+  request: RestRequestClient,
+  file: File,
+): Promise<T> {
+  const body = new FormData();
+  body.append("wallpaper", file);
+
+  return request.request<T>("/user/wallpaper", {
+    method: "POST",
+    body,
+  });
+}
+
+export function deleteWallpaper<T = { success: boolean }>(request: RestRequestClient): Promise<T> {
+  return request.request<T>("/user/wallpaper", {
+    method: "DELETE",
+  });
+}
+
 export function fetchGlobalPlugins<T = unknown>(request: RestRequestClient): Promise<T> {
   return request.request<T>("/settings/plugins/global");
 }

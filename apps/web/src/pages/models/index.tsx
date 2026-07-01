@@ -995,7 +995,7 @@ function buildModelConfig(form: AddModelFormState): Record<string, unknown> {
       ...(form.outputImage ? ["image"] : []),
     ],
     features: [
-      ...(form.toolCalling ? ["tool"] : []),
+      ...(form.toolCalling ? ["tools"] : []),
       ...(form.thinking ? ["thinking"] : []),
     ],
   };

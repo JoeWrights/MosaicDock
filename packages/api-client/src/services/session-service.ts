@@ -7,6 +7,47 @@ import type {
 } from "@mosaic-dock/shared";
 import type { RestRequestClient } from "../request";
 
+export interface SessionTokenStats {
+  usedTokens: number;
+  totalTokens: number;
+  remainingTokens: number;
+  percentage: number;
+  modelName: string;
+  messageCount: number;
+}
+
+export interface SessionSummary {
+  id: string;
+  sessionId?: string;
+  summaryContent?: string | null;
+  compressionStats?: {
+    beforeTokenCount?: number;
+    afterTokenCount?: number;
+    beforeMessageCount?: number;
+    afterMessageCount?: number;
+  } | null;
+  pruningMetadata?: Record<string, unknown> | null;
+  cleaningStrategy?: string | null;
+  createdAt?: string;
+}
+
+export interface CompressSessionResponse {
+  success: boolean;
+  message?: string;
+  before?: {
+    tokenCount?: number;
+    messageCount?: number;
+    contextWindow?: number;
+  };
+  after?: {
+    tokenCount?: number;
+    messageCount?: number;
+    compressionRatio?: string;
+  };
+  strategy?: string;
+  modelName?: string;
+}
+
 export function createSession(
   request: RestRequestClient,
   data: CreateSessionRequest,
@@ -79,5 +120,48 @@ export function fetchSessionMessages(
 
   return request.request<PaginatedResponse<Message>>(`/sessions/${sessionId}/messages`, {
     params: Object.keys(params).length > 0 ? params : undefined,
+  });
+}
+
+export function fetchSessionTokenStats(
+  request: RestRequestClient,
+  sessionId: string,
+): Promise<SessionTokenStats> {
+  return request.request<SessionTokenStats>(`/sessions/${sessionId}/token-stats`);
+}
+
+export function fetchSessionSummaries(
+  request: RestRequestClient,
+  sessionId: string,
+): Promise<SessionSummary[]> {
+  return request.request<SessionSummary[]>(`/sessions/${sessionId}/summaries`);
+}
+
+export function compressSession(
+  request: RestRequestClient,
+  sessionId: string,
+): Promise<CompressSessionResponse> {
+  return request.request<CompressSessionResponse>(`/sessions/${sessionId}/compress`, {
+    method: "POST",
+  });
+}
+
+export function updateSummary(
+  request: RestRequestClient,
+  summaryId: string,
+  data: { summaryContent?: string },
+): Promise<SessionSummary> {
+  return request.request<SessionSummary>(`/sessions/summaries/${summaryId}`, {
+    method: "PUT",
+    body: data,
+  });
+}
+
+export function deleteSummary<T = { success: boolean }>(
+  request: RestRequestClient,
+  summaryId: string,
+): Promise<T> {
+  return request.request<T>(`/sessions/summaries/${summaryId}`, {
+    method: "DELETE",
   });
 }

@@ -4,13 +4,24 @@ export interface Model {
   modelType: string;
   providerId: string;
   providerName?: string;
+  config?: ModelConfig;
   isActive: boolean;
   contextWindow?: number;
   maxOutputTokens?: number;
   description?: string;
   isFavorite?: boolean;
+  thinkingEfforts?: string[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface ModelConfig {
+  inputCapabilities?: string[];
+  outputCapabilities?: string[];
+  features?: string[];
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  vectorDimensions?: number;
 }
 
 export interface ModelProvider {
