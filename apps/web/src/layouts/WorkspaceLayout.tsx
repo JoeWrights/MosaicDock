@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   AlarmClock,
   Bot,
@@ -32,12 +32,12 @@ import { cn } from "../lib/utils";
 
 const navigation = [
   { key: "new-session", label: "新建任务", icon: PlusSquare, path: `${RoutePath.CHAT}/new-session` },
-  { key: "characters", label: "助手", icon: UserRound },
-  { key: "bots", label: "机器人", icon: Bot },
-  { key: "knowledge-base", label: "知识库", icon: BookOpen },
-  { key: "plugins", label: "插件市场", icon: Puzzle },
-  { key: "scheduler", label: "定时任务", icon: AlarmClock },
-  { key: "models", label: "模型管理", icon: Cloud },
+  { key: "characters", label: "助手", icon: UserRound, path: RoutePath.CHARACTERS_ASSISTANTS },
+  { key: "bots", label: "机器人", icon: Bot, path: RoutePath.BOTS_MANAGEMENT },
+  { key: "knowledge-base", label: "知识库", icon: BookOpen, path: RoutePath.KNOWLEDGE_BASE },
+  { key: "plugins", label: "插件市场", icon: Puzzle, path: RoutePath.PLUGINS_LOCAL_TOOLS },
+  { key: "scheduler", label: "定时任务", icon: AlarmClock, path: RoutePath.SCHEDULER },
+  { key: "models", label: "模型管理", icon: Cloud, path: RoutePath.MODELS },
 ];
 
 interface WorkspaceLayoutApi {
@@ -64,7 +64,7 @@ interface WorkspaceSidebarContextValue {
   closeSidebar: () => void;
 }
 
-const WorkspaceSidebarContext = createContext<WorkspaceSidebarContextValue | null>(null);
+export const WorkspaceSidebarContext = createContext<WorkspaceSidebarContextValue | null>(null);
 const defaultSidebarContext: WorkspaceSidebarContextValue = {
   sidebarOpen: false,
   toggleSidebar: () => undefined,
@@ -77,7 +77,7 @@ export function useWorkspaceSidebar() {
 }
 
 export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionGroups, setSessionGroups] = useState<SessionGroup[]>([]);
   const [groupManageOpen, setGroupManageOpen] = useState(false);
@@ -109,24 +109,39 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
       return "new-session";
     }
     if (location.pathname.startsWith(RoutePath.CHAT)) return "chat";
-    if (location.pathname.startsWith("/models")) return "models";
+    if (location.pathname.startsWith(RoutePath.CHARACTERS)) return "characters";
+    if (location.pathname.startsWith(RoutePath.BOTS_MANAGEMENT)) return "bots";
+    if (location.pathname.startsWith(RoutePath.KNOWLEDGE_BASE)) return "knowledge-base";
+    if (location.pathname.startsWith(RoutePath.PLUGINS)) return "plugins";
+    if (location.pathname.startsWith(RoutePath.SCHEDULER)) return "scheduler";
+    if (location.pathname.startsWith(RoutePath.MODELS)) return "models";
+    if (location.pathname.startsWith(RoutePath.SETTING)) return "setting";
     return "";
   }, [location.pathname]);
+  const isChatWorkspaceRoute = activeKey === "chat";
+
+  const loadSidebarData = useCallback(async () => {
+    const groupsResponse = await api.client.fetchSessionGroups();
+    const groups = normalizeSessionGroups(groupsResponse);
+    const sessionResponses = await Promise.all([
+      ...groups.map((group) => api.client.fetchSessions({ skip: 0, limit: 10, groupId: group.id })),
+      api.client.fetchSessions({ skip: 0, limit: 10, groupId: null }),
+    ]);
+    return {
+      groups,
+      sessions: sessionResponses.flatMap((response) => response.items),
+    };
+  }, [api]);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadSidebarData() {
+    async function loadInitialSidebarData() {
       try {
-        const groupsResponse = await api.client.fetchSessionGroups();
-        const groups = normalizeSessionGroups(groupsResponse);
-        const sessionResponses = await Promise.all([
-          ...groups.map((group) => api.client.fetchSessions({ skip: 0, limit: 10, groupId: group.id })),
-          api.client.fetchSessions({ skip: 0, limit: 10, groupId: null }),
-        ]);
+        const data = await loadSidebarData();
         if (!cancelled) {
-          setSessions(sessionResponses.flatMap((response) => response.items));
-          setSessionGroups(groups);
+          setSessions(data.sessions);
+          setSessionGroups(data.groups);
         }
       } catch {
         if (!cancelled) {
@@ -136,17 +151,37 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
       }
     }
 
-    void loadSidebarData();
+    void loadInitialSidebarData();
 
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [loadSidebarData]);
+
+  useEffect(() => {
+    function handleSessionCreated(event: Event) {
+      const session = (event as CustomEvent<unknown>).detail;
+      if (isSessionLike(session)) {
+        setSessions((current) => [
+          session,
+          ...current.filter((item) => item.id !== session.id),
+        ]);
+        return;
+      }
+
+      void loadSidebarData().then((data) => {
+        setSessions(data.sessions);
+        setSessionGroups(data.groups);
+      });
+    }
+
+    window.addEventListener("mosaic-session-created", handleSessionCreated);
+    return () => window.removeEventListener("mosaic-session-created", handleSessionCreated);
+  }, [loadSidebarData]);
 
   function handleNavigate(path?: string) {
     if (!path) return;
     void navigate(path);
-    setSidebarOpen(false);
   }
 
   function selectSession(session: Session) {
@@ -205,6 +240,9 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
 
     await api.client.deleteSession(deleteTarget.id, { deleteWorkspace });
     setSessions((current) => current.filter((session) => session.id !== deleteTarget.id));
+    if (deleteTarget.id === sessionId) {
+      void navigate(`${RoutePath.CHAT}/new-session`);
+    }
     setDeleteTarget(null);
     setDeleteWorkspace(false);
   }
@@ -230,7 +268,12 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
 
   return (
     <WorkspaceSidebarContext.Provider value={sidebarContext}>
-      <div className="relative flex min-h-screen bg-background text-foreground dark:bg-[#1e1f23] dark:text-[#e8e9ed]">
+      <div
+        className={cn(
+          "relative flex bg-background text-foreground dark:bg-[#1e1f23] dark:text-[#e8e9ed]",
+          isChatWorkspaceRoute ? "h-screen min-h-0 overflow-hidden" : "min-h-screen",
+        )}
+      >
       <button
         type="button"
         aria-hidden={!sidebarOpen}
@@ -376,7 +419,14 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
               )}
               {isDark ? "亮色" : "暗色"}
             </button>
-            <button type="button" className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-[#2a2c30]">
+            <button
+              type="button"
+              className={cn(
+                "inline-flex items-center gap-1 rounded-lg px-2 py-1.5 hover:bg-slate-100 dark:hover:bg-[#2a2c30]",
+                activeKey === "setting" && "bg-slate-100 text-foreground dark:bg-[#2a2c30] dark:text-[#e8e9ed]",
+              )}
+              onClick={() => handleNavigate(RoutePath.SETTING_GENERAL)}
+            >
               <Settings className="h-4 w-4" aria-hidden="true" />
               设置
             </button>
@@ -411,7 +461,7 @@ export function WorkspaceLayout({ api = mosaicApi }: WorkspaceLayoutProps) {
         )}
       </button>
 
-      <main className="min-w-0 flex-1">
+      <main className={cn("min-w-0 flex-1", isChatWorkspaceRoute && "min-h-0 overflow-hidden")}>
         <Outlet />
       </main>
       <SessionGroupManageDialog
@@ -583,6 +633,17 @@ function normalizeSessionGroups(response: unknown): SessionGroup[] {
       name: item.name,
       sortOrder: typeof item.sortOrder === "number" ? item.sortOrder : index,
     }));
+}
+
+function isSessionLike(value: unknown): value is Session {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "id" in value &&
+    "title" in value &&
+    typeof (value as { id: unknown }).id === "string" &&
+    typeof (value as { title: unknown }).title === "string"
+  );
 }
 
 export default WorkspaceLayout;

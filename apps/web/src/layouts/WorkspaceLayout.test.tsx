@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +24,10 @@ const mockClient = vi.hoisted(() => ({
   })),
   fetchWorkspaceTree: vi.fn(async () => ({ tree: [] })),
   fetchWorkspaceChildren: vi.fn(async () => ({ children: [] })),
+  fetchMessageContentToolDetails: vi.fn(async () => ({ toolCalls: [], toolCallsResponse: [] })),
+  updateMessageActiveContent: vi.fn(async () => ({ success: true })),
+  updateMessage: vi.fn(async () => ({ success: true })),
+  deleteMessage: vi.fn(async () => ({ success: true })),
   createMessage: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSessionGroups: vi.fn(),
@@ -61,6 +65,12 @@ function renderLayout() {
       <Routes>
         <Route element={<WorkspaceLayout />}>
           <Route path="/new-session" element={<TestPageHeader />} />
+          <Route path="/characters/:tab" element={<TestPageHeader />} />
+          <Route path="/bots/management" element={<TestPageHeader />} />
+          <Route path="/knowledge-base" element={<TestPageHeader />} />
+          <Route path="/scheduler" element={<TestPageHeader />} />
+          <Route path="/models" element={<TestPageHeader />} />
+          <Route path="/setting/:tab" element={<TestPageHeader />} />
           <Route path="/chat/:sessionId" element={<TestPageHeader />} />
         </Route>
       </Routes>
@@ -81,13 +91,13 @@ function renderChatLayout() {
 }
 
 function TestPageHeader() {
-  const { toggleSidebar } = useWorkspaceSidebar();
+  const { sidebarOpen, toggleSidebar } = useWorkspaceSidebar();
   const location = useLocation();
 
   return (
     <header>
       <div data-testid="location-path">{location.pathname}</div>
-      <button type="button" aria-label="展开侧边栏" onClick={toggleSidebar}>
+      <button type="button" aria-label={sidebarOpen ? "收起侧边栏" : "展开侧边栏"} onClick={toggleSidebar}>
         新建页面内容
       </button>
     </header>
@@ -121,18 +131,17 @@ describe("WorkspaceLayout", () => {
     ]);
   });
 
-  it("collapses the guada-style sidebar by default", () => {
+  it("keeps the guada-style sidebar resident on desktop by default", () => {
     renderLayout();
 
-    expect(screen.getByRole("button", { name: "展开侧边栏" })).toBeInTheDocument();
-    expect(screen.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "收起侧边栏" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { hidden: true }).className).toContain("lg:w-[280px]");
+    expect(screen.getByRole("complementary", { hidden: true }).className).not.toContain("lg:w-0");
   });
 
-  it("shows guada navigation, sessions and footer actions after expanding", async () => {
-    const user = userEvent.setup();
+  it("shows guada navigation, sessions and footer actions by default", async () => {
     renderLayout();
-
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
 
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新建任务" })).toBeInTheDocument();
@@ -149,11 +158,50 @@ describe("WorkspaceLayout", () => {
     expect(screen.getByRole("button", { name: "分组" })).toBeInTheDocument();
   });
 
+  it("navigates to the scheduler page from the guada sidebar", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "定时任务" }));
+
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/scheduler");
+    expect(screen.getByRole("button", { name: "定时任务" }).className).toContain("bg-slate-100");
+  });
+
+  it("navigates to the bot management page from the guada sidebar", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "机器人" }));
+
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/bots/management");
+    expect(screen.getByRole("button", { name: "机器人" }).className).toContain("bg-slate-100");
+  });
+
+  it("navigates to the guada-style settings page from the sidebar footer", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "设置" }));
+
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/setting/general");
+    expect(screen.getByRole("button", { name: "设置" }).className).toContain("bg-slate-100");
+  });
+
+  it("navigates to the knowledge base page from the guada sidebar", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "知识库" }));
+
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/knowledge-base");
+    expect(screen.getByRole("button", { name: "知识库" }).className).toContain("bg-slate-100");
+  });
+
   it("toggles the color scheme like guada and persists the preference", async () => {
     const user = userEvent.setup();
     renderLayout();
 
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
     await user.click(screen.getByRole("button", { name: "暗色" }));
 
     expect(document.documentElement.classList.contains("dark")).toBe(true);
@@ -169,24 +217,25 @@ describe("WorkspaceLayout", () => {
 
   it("restores the saved dark color scheme on load", async () => {
     localStorage.setItem("color-scheme", "dark");
-    const user = userEvent.setup();
     renderLayout();
-
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
 
     expect(document.documentElement.classList.contains("dark")).toBe(true);
     expect(screen.getByRole("button", { name: "亮色" })).toBeInTheDocument();
   });
 
-  it("uses the page header toggle on desktop and keeps the edge handle mobile-only", async () => {
+  it("uses the page header toggle to collapse and expand the desktop sidebar", async () => {
     const user = userEvent.setup();
     renderLayout();
 
-    const toggle = screen.getByRole("button", { name: "展开侧边栏" });
+    const sidebar = screen.getByRole("complementary", { hidden: true });
 
-    await user.click(toggle);
+    expect(sidebar.className).toContain("lg:w-[280px]");
+    await user.click(screen.getByRole("button", { name: "收起侧边栏" }));
 
-    expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
+    expect(sidebar.className).toContain("lg:w-0");
+    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
+
+    expect(sidebar.className).toContain("lg:w-[280px]");
 
     const edgeHandle = screen.getByRole("button", { name: "移动端收起侧边栏" });
     expect(edgeHandle.className).toContain("lg:hidden");
@@ -195,10 +244,7 @@ describe("WorkspaceLayout", () => {
   });
 
   it("does not render a vertical border at the sidebar edge", async () => {
-    const user = userEvent.setup();
     renderLayout();
-
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
 
     const sidebar = screen.getByRole("complementary", { hidden: true });
     expect(sidebar.className).not.toContain("border-r");
@@ -208,12 +254,33 @@ describe("WorkspaceLayout", () => {
     const user = userEvent.setup();
     renderLayout();
 
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
     await user.click(screen.getByRole("button", { name: "分组" }));
 
     const dialog = screen.getByRole("dialog", { name: "分组管理" });
     expect(dialog).toBeInTheDocument();
     expect(await within(dialog).findByText("研发任务")).toBeInTheDocument();
+  });
+
+  it("navigates to characters assistants and highlights the assistant entry", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "助手" }));
+
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/characters/assistants");
+    expect(screen.getByRole("button", { name: "助手", hidden: true }).className).toContain("bg-slate-100");
+    expect(screen.getByRole("complementary", { hidden: true }).className).toContain("lg:w-[280px]");
+    expect(screen.getByRole("complementary", { hidden: true }).className).not.toContain("lg:w-0");
+  });
+
+  it("navigates to model management and highlights the model entry", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "模型管理" }));
+
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/models");
+    expect(screen.getByRole("button", { name: "模型管理", hidden: true }).className).toContain("bg-slate-100");
   });
 
   it("renders all session groups flattened like guada", async () => {
@@ -264,8 +331,6 @@ describe("WorkspaceLayout", () => {
     const user = userEvent.setup();
     renderLayout();
 
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
-
     expect(await screen.findByRole("heading", { name: "测试" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "研发任务" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "任务列表" })).toBeInTheDocument();
@@ -277,7 +342,6 @@ describe("WorkspaceLayout", () => {
     const user = userEvent.setup();
     renderLayout();
 
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
     await user.click(await screen.findByRole("button", { name: "任务操作 指数退避重试" }));
     await user.click(screen.getByRole("menuitem", { name: "重命名" }));
 
@@ -295,7 +359,6 @@ describe("WorkspaceLayout", () => {
     const user = userEvent.setup();
     renderLayout();
 
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
     await user.click(await screen.findByRole("button", { name: "打开会话 指数退避重试" }));
 
     expect(screen.getByTestId("location-path")).toHaveTextContent("/chat/session-1");
@@ -306,17 +369,18 @@ describe("WorkspaceLayout", () => {
     expect(activeSessionButton.className).not.toContain("bg-slate-100");
   });
 
-  it("opens the guada-style sidebar from the chat session page", async () => {
-    const user = userEvent.setup();
-    renderChatLayout();
+  it("keeps the guada-style sidebar resident on the chat session page", async () => {
+    const { container } = renderChatLayout();
 
     await screen.findByRole("heading", { name: "指数退避重试" });
-    expect(screen.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
-
     expect(screen.getByRole("navigation", { name: "主导航" })).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "任务列表" })).toBeInTheDocument();
+
+    expect(container.firstElementChild?.className).toContain("h-screen");
+    expect(container.firstElementChild?.className).toContain("overflow-hidden");
+    expect(container.firstElementChild?.className).not.toContain("min-h-screen");
+    expect(container.querySelector("main")?.className).toContain("min-h-0");
+    expect(container.querySelector("main")?.className).toContain("overflow-hidden");
 
     const sidebar = screen.getByRole("complementary", { hidden: true });
     expect(sidebar.className).toContain("lg:sticky");
@@ -330,7 +394,6 @@ describe("WorkspaceLayout", () => {
     const user = userEvent.setup();
     renderLayout();
 
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
     await user.click(await screen.findByRole("button", { name: "任务操作 指数退避重试" }));
     await user.click(screen.getByRole("menuitem", { name: "移动到分组" }));
 
@@ -348,7 +411,6 @@ describe("WorkspaceLayout", () => {
     const user = userEvent.setup();
     renderLayout();
 
-    await user.click(screen.getByRole("button", { name: "展开侧边栏" }));
     await user.click(await screen.findByRole("button", { name: "任务操作 指数退避重试" }));
     await user.click(screen.getByRole("menuitem", { name: "删除" }));
 
@@ -359,5 +421,22 @@ describe("WorkspaceLayout", () => {
 
     expect(mockClient.deleteSession).toHaveBeenCalledWith("session-1", { deleteWorkspace: false });
     expect(screen.queryByText("指数退避重试")).not.toBeInTheDocument();
+  });
+
+  it("navigates to new-session after deleting the active chat session", async () => {
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(await screen.findByRole("button", { name: "打开会话 指数退避重试" }));
+    expect(screen.getByTestId("location-path")).toHaveTextContent("/chat/session-1");
+
+    await user.click(screen.getByRole("button", { name: "任务操作 指数退避重试" }));
+    await user.click(screen.getByRole("menuitem", { name: "删除" }));
+    await user.click(screen.getByRole("button", { name: "确定删除" }));
+
+    expect(mockClient.deleteSession).toHaveBeenCalledWith("session-1", { deleteWorkspace: false });
+    await waitFor(() => {
+      expect(screen.getByTestId("location-path")).toHaveTextContent("/chat/new-session");
+    });
   });
 });

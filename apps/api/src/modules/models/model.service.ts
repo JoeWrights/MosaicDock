@@ -24,10 +24,11 @@ export class ModelService {
 
     // 动态合并模板 attributes
     const mergedProviders = providers.map((provider) => {
+      const safeProvider = this.withApiKeyState(provider);
       // 过滤模型：根据 includeInactive 参数决定是否包含禁用的模型
       const filteredModels = includeInactive
-        ? provider.models
-        : provider.models.filter(model => model.isActive !== false);
+        ? safeProvider.models
+        : safeProvider.models.filter(model => model.isActive !== false);
 
       // 为每个模型添加 thinkingEfforts（从供应商获取）
       const modelsWithThinkingEfforts = filteredModels.map((model: any) => {
@@ -69,11 +70,11 @@ export class ModelService {
           const metadata = supplier.getMetadata();
 
           return {
-            ...provider,
+            ...safeProvider,
             models: modelsWithThinkingEfforts,
-            name: provider.provider == 'custom' ? provider.name : metadata.name,
+            name: safeProvider.provider == 'custom' ? safeProvider.name : metadata.name,
             // 非 custom 供应商使用协议的第一个协议，custom 供应商使用数据库中存储的实际协议
-            protocol: provider.provider === 'custom' ? (provider.protocol || metadata.protocols[0]) : metadata.protocols[0],
+            protocol: safeProvider.provider === 'custom' ? (safeProvider.protocol || metadata.protocols[0]) : metadata.protocols[0],
             description: metadata.description,
             apiKeyUrl: metadata.apiKeyUrl,
           };
@@ -85,7 +86,7 @@ export class ModelService {
 
       // 对于没有模板的供应商（如自定义），直接返回
       return {
-        ...provider,
+        ...safeProvider,
         models: modelsWithThinkingEfforts,
       };
     });
@@ -103,6 +104,13 @@ export class ModelService {
    */
   async getAllModelsAndProviders() {
     return this.getModelsAndProviders(true);
+  }
+
+  private withApiKeyState<T extends { apiKey?: string | null }>(provider: T): T & { apiKeySet: boolean } {
+    return {
+      ...provider,
+      apiKeySet: Boolean(provider.apiKey),
+    };
   }
 
   /**
@@ -288,9 +296,10 @@ export class ModelService {
         include: { models: true },
       });
 
-      const result = finalDescription
-        ? { ...provider, description: finalDescription }
-        : provider;
+      const safeProvider = provider ? this.withApiKeyState(provider) : provider;
+      const result = finalDescription && safeProvider
+        ? { ...safeProvider, description: finalDescription }
+        : safeProvider;
       return result;
     });
   }
@@ -352,12 +361,12 @@ export class ModelService {
       const { name, apiUrl, protocol, ...allowedData } = data;
       // 只允许更新 apiKey 等其他字段
       const updatedProvider = await this.modelRepo.updateProvider(providerId, allowedData);
-      return { ...updatedProvider };
+      return this.withApiKeyState(updatedProvider);
     }
 
     // custom 类型可以更新所有字段
     const updatedProvider = await this.modelRepo.updateProvider(providerId, data);
-    return { ...updatedProvider };
+    return this.withApiKeyState(updatedProvider);
   }
 
   /**

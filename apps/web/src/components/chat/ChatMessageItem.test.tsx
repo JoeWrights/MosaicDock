@@ -1,0 +1,339 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { Message } from "@mosaic-dock/shared";
+import { describe, expect, it, vi } from "vitest";
+import { ChatMessageItem } from "./ChatMessageItem";
+
+const assistantMessage = (): Message => ({
+  id: "assistant-1",
+  role: "assistant",
+  currentTurnsId: "turn-1",
+  state: { isStreaming: false },
+  contents: [
+    {
+      id: "content-1",
+      turnsId: "turn-1",
+      content: "## 完成\n\n```ts\nconst ok = true;\n```",
+      reasoningContent: "先检查上下文，再生成答案。",
+      thinkingDurationMs: 1200,
+      createdAt: "2026-06-29T15:20:00.000",
+      state: { isStreaming: false },
+      metadata: {
+        modelName: "DeepSeek-V3.2",
+        usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+        toolCalls: [{ name: "file.write", metadata: { displayMessage: { action: "已写入文件", args: "README.md" } } }],
+        toolCallsResponse: [{ name: "file.write", content: "ok", toolCallId: "tool-1" }],
+      },
+    },
+    {
+      id: "content-2",
+      turnsId: "turn-2",
+      content: "旧版本",
+      state: { isStreaming: false },
+    },
+  ],
+});
+
+const userMessage = (): Message => ({
+  id: "user-1",
+  role: "user",
+  state: { isStreaming: false },
+  contents: [
+    {
+      id: "user-content-1",
+      content: "指数退避重试",
+      state: { isStreaming: false },
+    },
+  ],
+});
+
+describe("ChatMessageItem", () => {
+  it("renders Guada-style actions below user messages", async () => {
+    const user = userEvent.setup();
+    const onGenerate = vi.fn();
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+
+    render(
+      <ChatMessageItem
+        message={userMessage()}
+        allowGenerate
+        onGenerate={onGenerate}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />,
+    );
+
+    expect(screen.getByText("指数退避重试")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制用户消息" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "继续生成" }));
+    expect(onGenerate).toHaveBeenCalledWith(userMessage());
+
+    await user.click(screen.getByRole("button", { name: "更多操作" }));
+    await user.click(screen.getByRole("menuitem", { name: "编辑内容" }));
+    expect(onEdit).toHaveBeenCalledWith(userMessage());
+
+    await user.click(screen.getByRole("button", { name: "更多操作" }));
+    await user.click(screen.getByRole("menuitem", { name: "删除消息" }));
+    expect(onDelete).toHaveBeenCalledWith(userMessage());
+  });
+
+  it("shows a loading state before streaming answer text arrives", () => {
+    const message: Message = {
+      id: "assistant-streaming",
+      role: "assistant",
+      state: { isStreaming: true },
+      contents: [
+        {
+          id: "content-streaming",
+          content: "",
+          reasoningContent: "",
+          state: { isStreaming: true },
+        },
+      ],
+    };
+
+    const { container } = render(<ChatMessageItem message={message} />);
+
+    expect(screen.getByText("正在生成回答...")).toBeInTheDocument();
+    expect(container.querySelector(".markdown-text")).toBeNull();
+  });
+
+  it("keeps a loading indicator at the bottom while an assistant message is still streaming", () => {
+    const streamingMessage = assistantMessage();
+    streamingMessage.state = { isStreaming: true };
+    streamingMessage.contents[0] = {
+      ...streamingMessage.contents[0]!,
+      content: "已经生成了一部分回答。",
+      state: { isStreaming: true },
+    };
+
+    const { rerender } = render(<ChatMessageItem message={streamingMessage} />);
+
+    expect(screen.getByText("已经生成了一部分回答。")).toBeInTheDocument();
+    expect(screen.getByText("回答中")).toBeInTheDocument();
+
+    rerender(<ChatMessageItem message={assistantMessage()} />);
+
+    expect(screen.queryByText("回答中")).not.toBeInTheDocument();
+  });
+
+  it("renders user message attachments", () => {
+    render(
+      <ChatMessageItem
+        message={{
+          ...userMessage(),
+          files: [
+            {
+              id: "file-image",
+              displayName: "截图.png",
+              fileName: "screenshot.png",
+              fileType: "image",
+              fileSize: 2048,
+              url: "/uploads/images/screenshot.jpg",
+              previewUrl: "/uploads/previews/screenshot.jpg",
+            },
+            {
+              id: "file-doc",
+              displayName: "需求.md",
+              fileName: "requirements.md",
+              fileType: "text",
+              fileExtension: "md",
+              fileSize: 1024,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: "截图.png" })).toHaveAttribute("src", "/uploads/previews/screenshot.jpg");
+    expect(screen.getByText("需求.md")).toBeInTheDocument();
+    expect(screen.getByText("1 KB")).toBeInTheDocument();
+  });
+
+  it("opens a guada-style image preview when clicking message image attachments", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChatMessageItem
+        message={{
+          ...userMessage(),
+          files: [
+            {
+              id: "file-image",
+              displayName: "截图.png",
+              fileName: "screenshot.png",
+              fileType: "image",
+              fileSize: 2048,
+              url: "/uploads/images/screenshot.jpg",
+              previewUrl: "/uploads/previews/screenshot.jpg",
+            },
+          ],
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "预览图片 截图.png" }));
+
+    const dialog = screen.getByRole("dialog", { name: "图片预览" });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "截图.png 预览" })).toHaveAttribute("src", "/uploads/images/screenshot.jpg");
+    expect(screen.getByRole("button", { name: "放大图片" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "顺时针旋转" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "关闭图片预览" }));
+    expect(screen.queryByRole("dialog", { name: "图片预览" })).not.toBeInTheDocument();
+  });
+
+  it("renders backend messages that omit state fields", () => {
+    const { state: _messageState, contents, ...messageWithoutState } = assistantMessage();
+    const [{ state: _contentState, ...firstContentWithoutState }, ...restContents] = contents;
+    const message = {
+      ...messageWithoutState,
+      contents: [firstContentWithoutState, ...restContents],
+    };
+
+    render(<ChatMessageItem message={message as Message} />);
+
+    expect(screen.getByText("智能助手")).toBeInTheDocument();
+    expect(screen.getByText("完成")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /重新生成/ })).toBeInTheDocument();
+  });
+
+  it("renders the configured assistant avatar and name", () => {
+    render(
+      <ChatMessageItem
+        message={assistantMessage()}
+        assistantName="产品经理"
+        assistantAvatarUrl="/uploads/characters/product-manager.png"
+      />,
+    );
+
+    expect(screen.getByText("产品经理")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "产品经理头像" })).toHaveAttribute(
+      "src",
+      "/uploads/characters/product-manager.png",
+    );
+  });
+
+  it("renders assistant rich answer sections", () => {
+    const { container } = render(<ChatMessageItem message={assistantMessage()} />);
+
+    expect(screen.getByText("智能助手")).toBeInTheDocument();
+    expect(screen.getByText("DeepSeek-V3.2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /已深度思考/ })).toBeInTheDocument();
+    expect(screen.getByText("完成")).toBeInTheDocument();
+    expect(screen.getByText("ts")).toBeInTheDocument();
+    expect(screen.getByText("已写入文件")).toBeInTheDocument();
+    expect(screen.getByText("README.md")).toBeInTheDocument();
+    expect(screen.getByText("Prompt 10")).toBeInTheDocument();
+    expect(screen.getByText("Completion 20")).toBeInTheDocument();
+    expect(screen.getByText("Total 30")).toBeInTheDocument();
+    expect(screen.getByTitle("2026-06-29 15:20:00")).toHaveTextContent("15:20");
+    const toolNode = screen.getByText("已写入文件");
+    const answerNode = container.querySelector(".markdown-text");
+    expect(answerNode).not.toBeNull();
+    expect(answerNode!.compareDocumentPosition(toolNode)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("opens tool details and switches content versions with Guada-style pager", async () => {
+    const user = userEvent.setup();
+    const longExecutionResult = `{"stderr":"${"TS2304Cannotfindname".repeat(20)}"}`;
+    const onFetchToolDetails = vi.fn(async () => ({
+      toolCalls: [{ name: "file.write", arguments: { path: "README.md" } }],
+      toolCallsResponse: [{ name: "file.write", content: longExecutionResult, toolCallId: "tool-1" }],
+    }));
+    const onSwitchVersion = vi.fn();
+    render(
+      <ChatMessageItem
+        message={assistantMessage()}
+        onFetchToolDetails={onFetchToolDetails}
+        onSwitchVersion={onSwitchVersion}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /工具调用/ }));
+    expect(await screen.findByText("工具调用详情")).toBeInTheDocument();
+    expect(screen.getByText("执行结果")).toBeInTheDocument();
+    const executionResult = screen.getByText(longExecutionResult);
+    expect(executionResult).toBeInTheDocument();
+    expect(executionResult).toHaveClass("max-w-full", "wrap-break-word", "overflow-auto");
+    expect(onFetchToolDetails).toHaveBeenCalledWith("content-1");
+
+    await user.click(screen.getByRole("button", { name: /工具调用/ }));
+    expect(screen.queryByText("工具调用详情")).not.toBeInTheDocument();
+    expect(onFetchToolDetails).toHaveBeenCalledTimes(1);
+
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /版本 2/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "下一个版本" }));
+    expect(onSwitchVersion).toHaveBeenCalledWith("assistant-1", "content-2");
+  });
+
+  it("shows one switch action per answer version, not per content chunk", () => {
+    const message = assistantMessage();
+    message.contents = [
+      message.contents[0]!,
+      {
+        id: "content-1-tool",
+        turnsId: "turn-1",
+        content: null,
+        state: { isStreaming: false },
+        metadata: { toolCalls: [{ name: "file.read" }] },
+      },
+      message.contents[1]!,
+    ];
+
+    render(<ChatMessageItem message={message} />);
+
+    expect(screen.queryByRole("button", { name: /版本 1/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /版本 2/ })).not.toBeInTheDocument();
+    expect(screen.getByText("1 / 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下一个版本" })).toBeInTheDocument();
+  });
+
+  it("uses compact Guada-style version pager styling", () => {
+    render(<ChatMessageItem message={assistantMessage()} />);
+
+    const pager = screen.getByRole("group", { name: "回答版本切换" });
+    expect(pager).toHaveClass("h-6", "rounded", "border-slate-200");
+    expect(pager).not.toHaveClass("shadow-sm");
+  });
+
+  it("moves edit and delete actions into a Guada-style more menu", async () => {
+    const user = userEvent.setup();
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+    render(<ChatMessageItem message={assistantMessage()} onEdit={onEdit} onDelete={onDelete} />);
+
+    expect(screen.queryByRole("button", { name: /删除/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "更多操作" }));
+
+    const menu = screen.getByRole("menu", { name: "更多消息操作" });
+    expect(menu.parentElement).toBe(document.body);
+    expect(menu).toHaveClass("fixed");
+    expect(menu).not.toHaveClass("absolute");
+    expect(screen.getByRole("menuitem", { name: "编辑内容" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "删除消息" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("menuitem", { name: "编辑内容" }));
+    expect(onEdit).toHaveBeenCalledWith(assistantMessage());
+
+    await user.click(screen.getByRole("button", { name: "更多操作" }));
+    await user.click(screen.getByRole("menuitem", { name: "删除消息" }));
+    expect(onDelete).toHaveBeenCalledWith(assistantMessage());
+  });
+
+  it("closes the more menu when clicking outside", async () => {
+    const user = userEvent.setup();
+    render(<ChatMessageItem message={assistantMessage()} />);
+
+    await user.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.getByRole("menu", { name: "更多消息操作" })).toBeInTheDocument();
+
+    await user.click(screen.getByText("智能助手"));
+    expect(screen.queryByRole("menu", { name: "更多消息操作" })).not.toBeInTheDocument();
+  });
+});

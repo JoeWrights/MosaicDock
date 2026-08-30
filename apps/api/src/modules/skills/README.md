@@ -118,6 +118,8 @@ SKILLS_DIR=./skills
 
 默认值为项目根目录下的 `skills/` 文件夹。
 
+云服务器、Docker、Kubernetes 等生产部署场景请参考 [Skills 云部署注意事项](./DEPLOYMENT.md)。
+
 ## 开发指南
 
 ### 添加自定义脚本

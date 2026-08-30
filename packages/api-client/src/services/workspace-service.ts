@@ -1,0 +1,29 @@
+import type { RestRequestClient } from "../request";
+import type { WorkspaceChildrenResponse, WorkspaceFileResponse, WorkspaceTreeResponse } from "../http-client";
+
+export function fetchWorkspaceTree(
+  request: RestRequestClient,
+  sessionId: string,
+): Promise<WorkspaceTreeResponse> {
+  return request.request<WorkspaceTreeResponse>(`/sessions/${sessionId}/workspace/tree`);
+}
+
+export function fetchWorkspaceChildren(
+  request: RestRequestClient,
+  sessionId: string,
+  path: string,
+): Promise<WorkspaceChildrenResponse> {
+  return request.request<WorkspaceChildrenResponse>(`/sessions/${sessionId}/workspace/children`, {
+    params: { path },
+  });
+}
+
+export function fetchWorkspaceFile(
+  request: RestRequestClient,
+  sessionId: string,
+  path: string,
+): Promise<WorkspaceFileResponse> {
+  return request.request<WorkspaceFileResponse>(`/sessions/${sessionId}/workspace/file`, {
+    params: { path },
+  });
+}

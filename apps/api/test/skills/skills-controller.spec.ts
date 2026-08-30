@@ -428,4 +428,117 @@ describe('SkillsController', () => {
       expect(result.message).toContain('Invalid URL');
     });
   });
+
+  describe('POST /skills/install-from-registry', () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it('source 不是 skills-sh 时应返回错误', async () => {
+      const result = await controller.installFromRegistry({
+        source: 'unknown',
+        identifier: 'anthropics/skills/skill-creator',
+        force: false,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Unsupported registry source');
+    });
+
+    it('应从 skills.sh 标识对应的 GitHub 子目录安装单个 Skill', async () => {
+      const zip = new AdmZip();
+      zip.addFile('skills-main/skill-creator/SKILL.md', Buffer.from(
+        '---\nname: skill-creator\ndescription: Registry skill\n---\n\n# Skill Creator\n',
+        'utf-8',
+      ));
+      zip.addFile('skills-main/other-skill/SKILL.md', Buffer.from(
+        '---\nname: other-skill\ndescription: Should not install\n---\n\n# Other\n',
+        'utf-8',
+      ));
+      const zipBuffer = zip.toBuffer();
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => zipBuffer.buffer.slice(zipBuffer.byteOffset, zipBuffer.byteOffset + zipBuffer.byteLength),
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await controller.installFromRegistry({
+        source: 'skills-sh',
+        identifier: 'anthropics/skills/skill-creator',
+        force: false,
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith('https://codeload.github.com/anthropics/skills/zip/refs/heads/main');
+      expect(result.success).toBe(true);
+      expect(result.skillIds).toEqual(['skill-creator']);
+      await expect(fs.access(path.join(testSkillsDir, 'skill-creator', 'SKILL.md'))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(testSkillsDir, 'other-skill', 'SKILL.md'))).rejects.toThrow();
+    });
+
+    it('应兼容 skills.sh 页面路径与 GitHub skills 子目录结构', async () => {
+      const zip = new AdmZip();
+      zip.addFile('skills-main/skills/frontend-design/SKILL.md', Buffer.from(
+        '---\nname: frontend-design\ndescription: Frontend design\n---\n\n# Frontend Design\n',
+        'utf-8',
+      ));
+      const zipBuffer = zip.toBuffer();
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => zipBuffer.buffer.slice(zipBuffer.byteOffset, zipBuffer.byteOffset + zipBuffer.byteLength),
+      }) as unknown as typeof fetch;
+
+      const result = await controller.installFromRegistry({
+        source: 'skills-sh',
+        identifier: '/anthropics/skills/frontend-design',
+        force: false,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.skillIds).toEqual(['frontend-design']);
+      await expect(fs.access(path.join(testSkillsDir, 'frontend-design', 'SKILL.md'))).resolves.toBeUndefined();
+    });
+
+    it('应从 GitHub repo URL 的 tree 子目录安装单个 Skill', async () => {
+      const zip = new AdmZip();
+      zip.addFile('repo-main/packages/github-skill/SKILL.md', Buffer.from(
+        '---\nname: github-skill\ndescription: GitHub skill\n---\n\n# GitHub Skill\n',
+        'utf-8',
+      ));
+      zip.addFile('repo-main/packages/other-skill/SKILL.md', Buffer.from(
+        '---\nname: other-skill\ndescription: Should not install\n---\n\n# Other\n',
+        'utf-8',
+      ));
+      const zipBuffer = zip.toBuffer();
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => zipBuffer.buffer.slice(zipBuffer.byteOffset, zipBuffer.byteOffset + zipBuffer.byteLength),
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await controller.installFromRegistry({
+        source: 'github',
+        identifier: 'https://github.com/acme/repo/tree/main/packages/github-skill',
+        force: false,
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith('https://codeload.github.com/acme/repo/zip/refs/heads/main');
+      expect(result.success).toBe(true);
+      expect(result.skillIds).toEqual(['github-skill']);
+      await expect(fs.access(path.join(testSkillsDir, 'github-skill', 'SKILL.md'))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(testSkillsDir, 'other-skill', 'SKILL.md'))).rejects.toThrow();
+    });
+
+    it('GitHub 标识无效时应返回错误', async () => {
+      const result = await controller.installFromRegistry({
+        source: 'github',
+        identifier: 'not-a-valid-repo',
+        force: false,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Invalid GitHub identifier');
+    });
+  });
 });
