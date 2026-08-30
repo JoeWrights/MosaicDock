@@ -103,7 +103,6 @@ CMD ["node", "apps/api/dist/main"]
 
 ## 文档
 
-- [迁移说明](docs/migration/README.md) — 从 guada 迁移的详细笔记与部署指引
 - [工具调用流程](docs/tool-calling-flow.md) — Agent 工具调用的完整链路说明
 
 ## License
